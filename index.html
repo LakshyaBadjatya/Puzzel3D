@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PUZZLE CAM</title>
+
+  <!-- Hoja de estilos del proyecto (todo el chrome y los @keyframes viven aquí) -->
+  <link rel="stylesheet" href="styles.css" />
+
+  <!--
+    Fuente Inter: usada por el contador (CONFIG.FONT_COUNTDOWN) y la interfaz.
+    Se precarga desde Google Fonts; si falla, se cae a sans-serif sin romper nada.
+  -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;900&display=swap"
+    rel="stylesheet"
+  />
+</head>
+<body>
+  <!-- ============================================================= -->
+  <!--  ÁRBOL DEL DOM — ids/clases normativos según CONTRACT.md §2   -->
+  <!-- ============================================================= -->
+  <div id="app">
+    <!-- Barra superior: título + insignia de estado de las manos -->
+    <header id="topbar" class="topbar">
+      <h1 id="title" class="title">PUZZLE CAM</h1>
+      <div id="status-badge" class="badge badge--off">
+        <span class="badge__dot"></span>
+        <span id="badge-label" class="badge__label">TRACKING HANDS</span>
+      </div>
+    </header>
+
+    <!-- Distribución principal: escenario (izquierda) + riel de la tira (derecha) -->
+    <main id="layout" class="layout">
+      <!-- Escenario: vídeo espejado oculto + dos lienzos apilados + capa de overlay -->
+      <section id="stage" class="stage">
+        <!-- Fuente de vídeo: oculta visualmente, espejada por CSS (selfie). -->
+        <video id="cam-video" class="stage__video" autoplay playsinline muted></video>
+        <!-- Capa del esqueleto de las manos (dibujada cada frame por Gestures.drawSkeleton) -->
+        <canvas id="cam-canvas" class="stage__canvas"></canvas>
+        <!-- Capa del puzle + efectos (espacio de coordenadas compartido para hit-testing) -->
+        <canvas id="fx-canvas" class="stage__canvas"></canvas>
+
+        <!-- Overlay del escenario: textos y efectos basados en DOM/CSS -->
+        <div id="stage-overlay" class="overlay">
+          <div id="idle-prompt" class="prompt prompt--idle">SHOW BOTH HANDS TO START</div>
+          <div id="countdown" class="countdown"><span id="countdown-num"></span></div>
+          <div id="flash" class="flash"></div>
+          <div id="complete" class="complete">COMPLETE!</div>
+          <div id="dim" class="dim"></div>
+        </div>
+
+        <!-- Always-visible floating controls: Restart + hide the strip / top bar -->
+        <div id="stage-controls" class="stage-controls">
+          <div class="sgrid" role="group" aria-label="Grid size / difficulty">
+            <button class="sbtn sbtn--grid is-active" data-grid="3" type="button" title="3x3 (easy)">3&times;3</button>
+            <button class="sbtn sbtn--grid" data-grid="4" type="button" title="4x4 (medium)">4&times;4</button>
+            <button class="sbtn sbtn--grid" data-grid="5" type="button" title="5x5 (hard)">5&times;5</button>
+          </div>
+          <button id="btn-restart" class="sbtn" type="button" title="Restart the game">&#8635; Restart</button>
+          <button id="toggle-rail" class="sbtn" type="button" title="Hide/show the photo strip">&#9638; Strip</button>
+          <button id="toggle-topbar" class="sbtn" type="button" title="Hide/show the top bar">&#9644; Bar</button>
+        </div>
+      </section>
+
+      <!-- Riel lateral: tira de fotos + banner + botones -->
+      <aside id="rail" class="rail">
+        <!-- Tira: las N .slot las genera PhotoStrip.init -->
+        <div id="strip" class="strip"><!-- N x .slot generadas por PhotoStrip.init --></div>
+        <div id="strip-banner" class="banner">STRIP COMPLETE — DOWNLOAD OR RESET TO CONTINUE</div>
+        <div id="controls" class="controls">
+          <button id="btn-download" class="btn btn--download">Download</button>
+          <button id="btn-reset" class="btn btn--reset">Reset</button>
+        </div>
+      </aside>
+    </main>
+
+    <!-- Cargador: anillo giratorio + "CARGANDO…" mientras inicia MediaPipe/cámara -->
+    <div id="loader" class="loader">
+      <div class="loader__ring"></div>
+      <span class="loader__label">LOADING…</span>
+    </div>
+
+    <!-- Pantalla de error de cámara: oculta por defecto, se muestra en fase ERROR -->
+    <div id="camera-error" class="camera-error" hidden>I NEED CAMERA ACCESS TO PLAY</div>
+
+    <!-- Lienzo de exportación fuera de pantalla: usado por PhotoStrip.composite. No visible. -->
+    <canvas id="export-canvas" hidden></canvas>
+  </div>
+
+  <!-- ============================================================= -->
+  <!--  CARGA DE SCRIPTS — orden normativo según CONTRACT.md §1      -->
+  <!-- ============================================================= -->
+
+  <!-- Globales de MediaPipe PRIMERO (Hands, HAND_CONNECTIONS, Camera, drawConnectors, drawLandmarks) -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+
+  <!-- Scripts del proyecto (defer, en orden: config → state → camera → gestures → puzzle → animations → photostrip → app) -->
+  <script defer src="config.js"></script>
+  <script defer src="state.js"></script>
+  <script defer src="camera.js"></script>
+  <script defer src="gestures.js"></script>
+  <script defer src="puzzle.js"></script>
+  <script defer src="animations.js"></script>
+  <script defer src="photostrip.js"></script>
+  <script defer src="app.js"></script>
+</body>
+</html>

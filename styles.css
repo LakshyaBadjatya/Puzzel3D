@@ -1,0 +1,982 @@
+/* =============================================================================
+   PUZZLE CAM — styles.css
+   -----------------------------------------------------------------------------
+   Rol de este archivo (segun CONTRACT.md §3): TODO el estilo de la app y CADA
+   @keyframes nombrado en el contrato. Layout (barra superior, escenario, riel
+   de la tira), estetica de fotomaton vintage y todas las animaciones CSS de la
+   seccion 6 del BRIEF.
+
+   Convenciones (CONTRACT.md):
+   - Solo HTML/CSS/JS vanilla. Sin frameworks ni build step.
+   - ids y clases EXACTOS del contrato (§2). @keyframes con nombres normativos (§3).
+   - UI en espanol. Comentarios en espanol.
+
+   @keyframes definidos aqui (nombres normativos, CONTRACT.md §3):
+     badge-dot-pulse  -> §6 #2   .badge--on .badge__dot
+     prompt-breathe   -> §6 #3   #idle-prompt.prompt--idle
+     capture-flash    -> §6 #6   #flash.flash--fire
+     stage-blink      -> §6 #6   #stage.stage--blink
+     complete-pop     -> §6 #16  #complete.complete--show
+     slot-bounce      -> §6 #20  .slot--filled .slot__inner
+     slot-clear       -> §6 #24  .slot--clearing .slot__inner
+     banner-in        -> §6 #21  #strip-banner.banner--show
+     btn-rise         -> §6 #22  #controls.controls--show .btn
+     download-pulse   -> §6 #23  #btn-download.btn--pulse
+     loader-spin      -> §6 #26  .loader__ring
+============================================================================= */
+
+/* =============================================================================
+   0. VARIABLES DE TEMA
+   Espejan CONFIG.COLORS del contrato (§4) para mantener una sola fuente visual.
+============================================================================= */
+:root {
+  /* Paleta funcional (igual a CONFIG.COLORS) */
+  --c-glow-cyan: #00fff7;   /* glow del esqueleto / acentos */
+  --c-skeleton:  #39ff14;   /* lineas del esqueleto de manos */
+  --c-gold:      #ffcf40;   /* ¡COMPLETO! y acentos calidos */
+  --c-green:     #1f8b3a;   /* badge activo / estados ok */
+  --c-badge-off: #4a4a4a;   /* badge inactivo */
+
+  /* Fondo y superficies (estetica estudio fotografico oscuro) */
+  --bg-0:        #0a0b0f;   /* fondo mas profundo */
+  --bg-1:        #12141c;   /* fondo de la app */
+  --bg-2:        #1b1e2a;   /* superficies elevadas */
+  --bg-3:        #262a3a;   /* superficies hover / bordes */
+  --line:        #333849;   /* lineas divisorias sutiles */
+
+  /* Texto */
+  --txt-0:       #f4f5fa;   /* texto principal */
+  --txt-1:       #aab0c4;   /* texto secundario */
+  --txt-2:       #7c83b1;   /* texto terciario */
+  --txt-dim:     #6b7186;   /* texto atenuado */
+
+  /* Papel de la tira de fotomaton (blanco crema vintage) */
+  --paper:       #f7f3e9;
+  --paper-edge:  #e6ddc9;
+  --paper-shadow: rgba(0, 0, 0, 0.45);
+
+  /* Curvas de easing (espejan CONFIG.EASES) */
+  --ease-back:  cubic-bezier(.34, 1.56, .64, 1);
+  --ease-out:   cubic-bezier(.16, 1, .3, 1);
+  --ease-inout: ease-in-out;
+
+  /* Glow reutilizable para acentos cyan */
+  --glow-cyan-soft: 0 0 10px rgba(0, 255, 247, 0.45),
+                    0 0 22px rgba(0, 255, 247, 0.22);
+
+  /* Tipografias */
+  --font-ui: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
+
+  /* Metricas de layout */
+  --topbar-h: 64px;
+  --rail-w:   250px;
+  --gap:      16px;
+  --radius:   14px;
+}
+
+/* =============================================================================
+   1. RESET BASE
+============================================================================= */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  font-family: var(--font-ui);
+  color: var(--txt-0);
+  /* Fondo en degradado tipo set fotografico, con vignette sutil */
+  background:
+    radial-gradient(120% 80% at 50% -10%, #1a1e2b 0%, var(--bg-1) 55%, var(--bg-0) 100%);
+  background-attachment: fixed;
+  overflow: hidden;                 /* la app ocupa toda la ventana, sin scroll */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  user-select: none;                /* juego por gestos; evitar seleccion accidental */
+}
+
+img,
+canvas,
+video {
+  display: block;
+}
+
+/* The author rule `canvas { display: block }` above beats the UA `[hidden]`
+   rule (author origin wins over UA), which left the offscreen #export-canvas
+   IN FLOW at its full composite height, collapsing the stage to ~0px. Reassert
+   that [hidden] always hides — offscreen canvases still draw/export fine. */
+[hidden] {
+  display: none !important;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+}
+
+/* =============================================================================
+   2. CONTENEDOR PRINCIPAL — #app
+============================================================================= */
+#app {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100vw;
+  height: 100vh;
+  padding: var(--gap);
+  gap: var(--gap);
+}
+
+/* =============================================================================
+   3. BARRA SUPERIOR — #topbar / .topbar
+   Titulo a la izquierda, badge de estado a la derecha.
+============================================================================= */
+.topbar {
+  flex: 0 0 var(--topbar-h);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 22px;
+  background: linear-gradient(180deg, var(--bg-2) 0%, var(--bg-1) 100%);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+}
+
+.title {
+  font-size: 26px;
+  font-weight: 900;
+  letter-spacing: 0.14em;
+  color: var(--txt-0);
+  /* Glow cyan tenue para reforzar la identidad "cam" */
+  text-shadow: 0 0 14px rgba(0, 255, 247, 0.35);
+}
+
+/* ----- Badge de estado (MANOS EN SEGUIMIENTO) ----- */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  border: 1px solid var(--line);
+  /* La transicion de fondo gris->verde (§6 #2, 0.3s) */
+  transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease,
+              box-shadow 0.3s ease;
+}
+
+/* Estado apagado: gris, sin manos */
+.badge--off {
+  background: rgba(74, 74, 74, 0.18);
+  color: var(--txt-dim);
+  border-color: rgba(74, 74, 74, 0.5);
+}
+
+/* Estado encendido: verde, hay al menos una mano */
+.badge--on {
+  background: rgba(31, 139, 58, 0.18);
+  color: #8ff0a6;
+  border-color: rgba(31, 139, 58, 0.55);
+  box-shadow: 0 0 14px rgba(31, 139, 58, 0.3);
+}
+
+.badge__dot {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--c-badge-off);
+  transition: background-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+/* Punto encendido: verde con glow; pulso definido por @keyframes badge-dot-pulse */
+.badge--on .badge__dot {
+  background: var(--c-green);
+  box-shadow: 0 0 10px rgba(31, 139, 58, 0.9);
+  /* §6 #2: escala 1 -> 1.25 -> 1, loop 1.2s */
+  animation: badge-dot-pulse 1.2s var(--ease-inout) infinite;
+}
+
+.badge__label {
+  white-space: nowrap;
+}
+
+/* =============================================================================
+   4. LAYOUT PRINCIPAL — #layout / .layout
+   Escenario (flexible) + riel de la tira (ancho fijo).
+============================================================================= */
+.layout {
+  flex: 1 1 auto;
+  display: flex;
+  gap: var(--gap);
+  min-height: 0;                    /* permite que los hijos se encojan dentro de flex */
+}
+
+/* =============================================================================
+   5. ESCENARIO — #stage / .stage
+   Video en vivo (espejado) + dos canvas superpuestos + overlay de texto/efectos.
+============================================================================= */
+.stage {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: #000;
+  border: 1px solid var(--line);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5),
+              inset 0 0 0 1px rgba(255, 255, 255, 0.03);
+  /* §6 #6: el "blink" del obturador escala el escenario momentaneamente.
+     transform-origin centrado para que el pellizco de escala sea simetrico. */
+  transform-origin: 50% 50%;
+}
+
+/* Video de la camara: ocupa el escenario y se espeja (vista selfie, BRIEF §3) */
+.stage__video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: scaleX(-1);            /* espejo horizontal (selfie) */
+  background: #000;
+}
+
+/* Canvas superpuestos (esqueleto y efectos). Llenan el escenario.
+   El tamaño interno en pixeles lo fija el JS (app.stageRect); aqui solo el CSS box. */
+.stage__canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;             /* el juego es por gestos, no por puntero */
+}
+
+/* #cam-canvas (esqueleto) queda debajo de #fx-canvas (puzzle/efectos).
+   Orden en el DOM: cam-canvas antes que fx-canvas, asi el stacking natural ya
+   coloca fx por encima. Reforzamos con z-index explicito. */
+#cam-canvas { z-index: 1; }
+#fx-canvas  { z-index: 2; }
+
+/* ----- Floating stage controls (Restart + hide strip / top bar) ----- */
+.stage-controls {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 6;                 /* over canvases (1-2) and overlay (3) */
+  display: flex;
+  gap: 8px;
+}
+.sbtn {
+  pointer-events: auto;       /* overlay/canvas are pointer-events:none */
+  background: rgba(18, 20, 28, 0.66);
+  color: var(--txt-0);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 7px 12px;
+  font: 700 12px var(--font-ui);
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+  transition: background-color 0.18s ease, box-shadow 0.18s ease, transform 0.06s ease;
+}
+.sbtn:hover {
+  background: rgba(38, 42, 58, 0.92);
+  box-shadow: var(--glow-cyan-soft);
+}
+.sbtn:active { transform: translateY(1px); }
+
+/* Difficulty / grid-size segmented group */
+.sgrid { display: flex; gap: 4px; }
+.sbtn--grid { padding: 7px 9px; }
+.sbtn--grid.is-active {
+  background: rgba(0, 255, 247, 0.18);
+  border-color: rgba(0, 255, 247, 0.55);
+  color: #bff8f4;
+  box-shadow: var(--glow-cyan-soft);
+}
+
+/* View toggles: hide the photo strip (history) and/or the top bar (navbar).
+   The flex layout reflows so the stage grows into the freed space. */
+#app.hide-rail #rail { display: none; }
+#app.hide-topbar #topbar { display: none; }
+
+/* ----- Overlay de texto y efectos sobre el escenario ----- */
+.overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;             /* solo decorativo; los botones viven en el riel */
+}
+
+/* §6 #25: crossfade de contenido del escenario.
+   Cada hijo directo del overlay transiciona su opacidad en 0.2s. */
+.overlay > * {
+  transition: opacity 0.2s ease;
+}
+
+/* Clase utilitaria de ocultacion suave (crossfade + sin interaccion) */
+.is-hidden {
+  opacity: 0 !important;        /* must beat the prompt-breathe keyframes */
+  animation: none !important;   /* stop the breathing so opacity:0 actually applies */
+  pointer-events: none;
+}
+
+/* ----- Capa de oscurecido (#dim) usada en IDLE (BRIEF §6 #3: escenario al 25%) ----- */
+.dim {
+  position: absolute;
+  inset: 0;
+  background: #000;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  pointer-events: none;
+}
+
+/* Oscurecido activo: ~25% para resaltar el prompt en IDLE */
+.dim--show {
+  opacity: 0.25;
+}
+
+/* ----- Prompt central (idle / instrucciones) ----- */
+.prompt {
+  position: absolute;
+  left: 50%;
+  bottom: 12%;
+  transform: translateX(-50%);
+  max-width: 80%;
+  text-align: center;
+  font-size: clamp(11px, 1.5vw, 16px);
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: var(--txt-0);
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.8),
+               0 0 18px rgba(0, 255, 247, 0.25);
+}
+
+/* §6 #3: respiracion del prompt IDLE.
+   Opacidad 0.55<->1 y escala 1<->1.04, loop 1.6s ease-in-out.
+   transform-origin para que la escala respete el centrado horizontal. */
+#idle-prompt.prompt--idle {
+  transform-origin: 50% 100%;
+  animation: prompt-breathe 1.6s var(--ease-inout) infinite;
+}
+
+/* ----- Cuenta regresiva (#countdown) ----- */
+/* El numero grande se dibuja en el canvas (#fx-canvas) por Anim.drawCountdown
+   (CONTRACT §6 #5, canvas-driven). Este nodo DOM existe segun el arbol del
+   contrato; lo mantenemos como contenedor centrado pero transparente para no
+   duplicar el render del canvas. */
+.countdown {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  /* Sin texto propio: el numero real va por canvas. Se deja vacio/transparente. */
+  opacity: 0;
+}
+
+#countdown-num {
+  font-size: clamp(120px, 22vw, 220px);
+  font-weight: 900;
+  line-height: 1;
+  color: #fff;
+}
+
+/* ----- Flash de captura (#flash) ----- */
+.flash {
+  position: absolute;
+  inset: 0;
+  background: #ffffff;
+  opacity: 0;                       /* invisible salvo durante el disparo */
+  pointer-events: none;
+}
+
+/* §6 #6: el flash se anima al añadir .flash--fire; el JS quita la clase en animationend */
+.flash--fire {
+  animation: capture-flash var(--dur-flash, 310ms) ease-out forwards;
+}
+
+/* §6 #6: "blink" del obturador sobre el escenario completo */
+.stage--blink {
+  animation: stage-blink 310ms ease-out;
+}
+
+/* ----- "¡COMPLETO!" (#complete) ----- */
+.complete {
+  position: absolute;
+  left: 50%;
+  top: 44%;
+  transform: translate(-50%, -50%) scale(0.5);
+  font-size: clamp(40px, 8vw, 92px);
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  color: var(--c-gold);
+  text-shadow: 0 0 22px rgba(255, 207, 64, 0.7),
+               0 4px 18px rgba(0, 0, 0, 0.6);
+  opacity: 0;                       /* oculto hasta SOLVED */
+  pointer-events: none;
+}
+
+/* §6 #16: pop al mostrar; el JS añade .complete--show en SOLVED */
+.complete--show {
+  /* La animacion deja el estado final (forwards) en escala 1 / opacidad 1 */
+  animation: complete-pop 0.4s var(--ease-back) forwards;
+}
+
+/* =============================================================================
+   6. RIEL DE LA TIRA — #rail / .rail
+   Estetica de fotomaton vintage: tira de papel crema con marcos blancos.
+============================================================================= */
+.rail {
+  flex: 0 0 var(--rail-w);
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+  min-height: 0;
+  padding: 18px;
+  background: linear-gradient(180deg, var(--bg-2) 0%, var(--bg-1) 100%);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  position: relative;
+}
+
+/* ----- La tira de papel (#strip) ----- */
+.strip {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: stretch;
+  justify-content: flex-start;
+  overflow-y: auto;
+  /* Papel crema con borde tipo cartulina de fotomaton */
+  padding: 14px 14px;
+  background:
+    linear-gradient(180deg, var(--paper) 0%, var(--paper-edge) 100%);
+  border-radius: 8px;
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 0, 0, 0.08),
+    inset 0 2px 6px rgba(0, 0, 0, 0.12),
+    0 6px 16px rgba(0, 0, 0, 0.35);
+  /* Pequeñas perforaciones laterales evocando pelicula/fotomaton */
+  background-image:
+    linear-gradient(180deg, var(--paper) 0%, var(--paper-edge) 100%);
+}
+
+/* ----- Cada slot de la tira ----- */
+.slot {
+  position: relative;
+  /* Las N ranuras se reparten la altura de la tira por igual: siempre visibles
+     sin scroll, sea cual sea STRIP_SLOTS. La foto rellena con object-fit: cover. */
+  flex: 1 1 0;
+  min-height: 0;
+  width: 100%;
+  border-radius: 4px;
+}
+
+/* Contenedor interno: aqui vive la imagen y se aplican las animaciones de relleno */
+.slot__inner {
+  position: absolute;
+  inset: 0;
+  border-radius: 4px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transform-origin: 50% 50%;
+}
+
+/* La foto inyectada por JS (img/canvas) llena el slot interior */
+.slot__inner img,
+.slot__inner canvas {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  /* Foto en escala de grises (la conversion real ocurre en canvas; este filtro
+     es un respaldo visual coherente con la tira B&N vintage) */
+  filter: grayscale(1) contrast(1.05);
+}
+
+/* §6 #20: slot vacio -> marcador con borde discontinuo */
+.slot--empty .slot__inner {
+  border: 2px dashed rgba(0, 0, 0, 0.28);
+  background:
+    repeating-linear-gradient(
+      45deg,
+      rgba(0, 0, 0, 0.03) 0px,
+      rgba(0, 0, 0, 0.03) 8px,
+      transparent 8px,
+      transparent 16px
+    );
+}
+
+/* §6 #20: slot lleno -> marco blanco fino + sombra interior (look fotomaton) */
+.slot--filled .slot__inner {
+  border: 4px solid #ffffff;
+  background: #fff;
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 0, 0, 0.12),
+    inset 0 2px 8px rgba(0, 0, 0, 0.28),
+    0 2px 6px rgba(0, 0, 0, 0.25);
+  /* Rebote al rellenarse (animacion definida en @keyframes slot-bounce) */
+  animation: slot-bounce var(--dur-slot-bounce, 350ms) var(--ease-back);
+}
+
+/* §6 #24: slot en limpieza (reset) -> desvanece y se encoge antes de volver a vacio */
+.slot--clearing .slot__inner {
+  animation: slot-clear 300ms var(--ease-out) forwards;
+}
+
+/* ----- Banner "TIRA COMPLETA" (#strip-banner) ----- */
+.banner {
+  flex: 0 0 auto;
+  padding: 12px 14px;
+  border-radius: 10px;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  line-height: 1.35;
+  color: var(--bg-0);
+  background: linear-gradient(180deg, var(--c-gold) 0%, #f2b733 100%);
+  box-shadow: 0 6px 16px rgba(255, 207, 64, 0.3);
+  /* Oculto hasta STRIP_COMPLETE */
+  opacity: 0;
+  transform: translateY(-8px);
+  pointer-events: none;
+}
+
+/* §6 #21: el banner entra deslizando + fundido al añadir .banner--show */
+.banner--show {
+  pointer-events: auto;
+  animation: banner-in var(--dur-banner, 400ms) var(--ease-out) forwards;
+}
+
+/* ----- Controles (#controls) y botones ----- */
+.controls {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.btn {
+  width: 100%;
+  padding: 13px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: var(--txt-0);
+  background: linear-gradient(180deg, var(--bg-3) 0%, var(--bg-2) 100%);
+  /* §6 #22: estados hover (lift + sombra) y active (press 0.97) */
+  transition: transform 0.15s var(--ease-out),
+              box-shadow 0.15s var(--ease-out),
+              background-color 0.15s ease,
+              border-color 0.15s ease;
+  /* Por defecto ocultos hasta que #controls reciba .controls--show */
+  opacity: 0;
+  transform: translateY(10px);
+}
+
+/* §6 #22: al revelar los controles, cada boton sube con fundido.
+   El stagger (80ms) se logra retrasando el segundo boton. */
+.controls--show .btn {
+  animation: btn-rise var(--dur-btn-rise, 350ms) var(--ease-out) forwards;
+}
+
+/* Primer boton (Descargar) sin retraso; segundo (Reiniciar) con stagger 80ms */
+.controls--show .btn--download { animation-delay: 0ms; }
+.controls--show .btn--reset    { animation-delay: 80ms; }
+
+/* Hover: levanta y refuerza sombra (solo cuando ya es visible/interactivo) */
+.controls--show .btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.45);
+  border-color: var(--bg-3);
+}
+
+/* Active: pulsacion 0.97 */
+.controls--show .btn:active {
+  transform: translateY(0) scale(0.97);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.4);
+}
+
+/* Foco accesible por teclado */
+.btn:focus-visible {
+  outline: 2px solid var(--c-glow-cyan);
+  outline-offset: 2px;
+}
+
+/* Variante Descargar: acento dorado para destacar la accion principal */
+.btn--download {
+  background: linear-gradient(180deg, #ffd968 0%, var(--c-gold) 100%);
+  color: #2a2300;
+  border-color: #e7b53a;
+}
+
+.controls--show .btn--download:hover {
+  box-shadow: 0 8px 22px rgba(255, 207, 64, 0.4);
+}
+
+/* §6 #23: pulso de atencion en Descargar hasta que se haga clic.
+   IMPORTANTE: btn--pulse coexiste con btn-rise; usamos una sombra animada que
+   no pelea con el transform de hover/active. */
+#btn-download.btn--pulse {
+  animation: download-pulse 1.4s var(--ease-inout) infinite;
+}
+
+/* Variante Reiniciar: secundaria, contorno sobrio */
+.btn--reset {
+  background: linear-gradient(180deg, var(--bg-3) 0%, var(--bg-2) 100%);
+}
+
+/* =============================================================================
+   7. CARGADOR — #loader / .loader (§6 #26)
+============================================================================= */
+.loader {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  background: radial-gradient(80% 60% at 50% 45%, #14161f 0%, var(--bg-0) 100%);
+  /* Transicion de fundido para entrar/salir (el JS oculta con .is-hidden) */
+  transition: opacity 0.3s ease, visibility 0.3s ease;
+}
+
+/* Ocultacion del loader: reutiliza .is-hidden y desactiva interaccion */
+.loader.is-hidden {
+  opacity: 0;
+  visibility: hidden;
+}
+
+/* Anillo giratorio (§6 #26) */
+.loader__ring {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  border: 5px solid rgba(0, 255, 247, 0.18);
+  border-top-color: var(--c-glow-cyan);
+  box-shadow: var(--glow-cyan-soft);
+  animation: loader-spin 0.9s linear infinite;
+}
+
+.loader__label {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  color: var(--txt-1);
+}
+
+/* =============================================================================
+   8. PANTALLA DE ERROR DE CAMARA — #camera-error / .camera-error
+   Se muestra (quitando [hidden]) si se deniega el acceso a la camara.
+============================================================================= */
+.camera-error {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  text-align: center;
+  font-size: clamp(18px, 3vw, 28px);
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: var(--txt-0);
+  background: radial-gradient(80% 60% at 50% 45%, #221218 0%, var(--bg-0) 100%);
+}
+
+/* El atributo [hidden] del HTML debe ocultar realmente el nodo */
+.camera-error[hidden] {
+  display: none;
+}
+
+/* =============================================================================
+   9. @KEYFRAMES — todas las animaciones CSS de la seccion 6 del BRIEF
+   (nombres normativos, CONTRACT.md §3)
+============================================================================= */
+
+/* §6 #2 — Pulso del punto del badge: escala 1 -> 1.25 -> 1 (loop 1.2s) */
+@keyframes badge-dot-pulse {
+  0%   { transform: scale(1);    box-shadow: 0 0 8px rgba(31, 139, 58, 0.85); }
+  50%  { transform: scale(1.25); box-shadow: 0 0 16px rgba(31, 139, 58, 1); }
+  100% { transform: scale(1);    box-shadow: 0 0 8px rgba(31, 139, 58, 0.85); }
+}
+
+/* §6 #3 — Respiracion del prompt IDLE: opacidad 0.55<->1, escala 1<->1.04 (1.6s) */
+@keyframes prompt-breathe {
+  0%   { opacity: 0.55; transform: translateX(-50%) scale(1); }
+  50%  { opacity: 1;    transform: translateX(-50%) scale(1.04); }
+  100% { opacity: 0.55; transform: translateX(-50%) scale(1); }
+}
+
+/* §6 #6 — Flash de captura: opacidad 0 -> 1 (rapido) -> 0 (lento).
+   ~20% del total para el subir (≈60ms sobre 310ms) y el resto para bajar (≈250ms). */
+@keyframes capture-flash {
+  0%   { opacity: 0; }
+  19%  { opacity: 1; }   /* pico de blanco (~60ms) */
+  100% { opacity: 0; }   /* desvanecido (~250ms) */
+}
+
+/* §6 #6 — "Blink" del obturador: el escenario se encoge a 0.98 y vuelve */
+@keyframes stage-blink {
+  0%   { transform: scale(1); }
+  30%  { transform: scale(0.98); }
+  100% { transform: scale(1); }
+}
+
+/* §6 #16 — Pop de "¡COMPLETO!": escala 0.5 -> 1.15 -> 1 con fundido (ease-back) */
+@keyframes complete-pop {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.5);
+  }
+  60% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1.15);
+  }
+  100% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
+/* §6 #20 — Rebote del slot al rellenarse: pequeño overshoot de escala */
+@keyframes slot-bounce {
+  0%   { transform: scale(0.7); }
+  55%  { transform: scale(1.08); }
+  100% { transform: scale(1); }
+}
+
+/* §6 #24 — Limpieza del slot (reset): desvanece y encoge hacia vacio */
+@keyframes slot-clear {
+  0%   { opacity: 1; transform: scale(1); }
+  100% { opacity: 0; transform: scale(0.85); }
+}
+
+/* §6 #21 — Entrada del banner "TIRA COMPLETA": desliza desde arriba + fundido */
+@keyframes banner-in {
+  0% {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* §6 #22 — Botones suben con fundido al revelarse */
+@keyframes btn-rise {
+  0% {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* §6 #23 — Pulso de atencion en Descargar.
+   Animamos solo opacidad + sombra (no transform) para no chocar con hover/active. */
+@keyframes download-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(255, 207, 64, 0.55);
+  }
+  60% {
+    box-shadow: 0 0 0 12px rgba(255, 207, 64, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(255, 207, 64, 0);
+  }
+}
+
+/* §6 #26 — Giro del anillo del cargador */
+@keyframes loader-spin {
+  0%   { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* =============================================================================
+   10. RESPONSIVE — adaptaciones de pantalla pequeña
+   El riel pasa debajo del escenario en ventanas estrechas.
+============================================================================= */
+@media (max-width: 880px) {
+  .layout {
+    flex-direction: column;
+  }
+  .rail {
+    flex: 0 0 auto;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: stretch;
+  }
+  .strip {
+    flex: 1 1 100%;
+    flex-direction: row;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+  .slot {
+    flex: 0 0 120px;
+    width: 120px;
+  }
+  .controls {
+    flex: 1 1 100%;
+    flex-direction: row;
+  }
+  .title {
+    font-size: 20px;
+  }
+}
+
+/* =============================================================================
+   11. MOVIMIENTO REDUCIDO — §6 #27
+   Respeta prefers-reduced-motion: acorta/desactiva animaciones NO esenciales
+   (confeti, pulsos, respiraciones, rebotes) pero conserva el feedback funcional.
+   Se aplica via media query Y via body.reduced-motion (lo añade
+   Anim.applyReducedMotion segun CONTRACT §4/§9).
+============================================================================= */
+
+/* Reglas compartidas para ambos disparadores (media query y clase). */
+@media (prefers-reduced-motion: reduce) {
+  /* Desactivar pulsos/respiraciones cosmeticas */
+  .badge--on .badge__dot,
+  #idle-prompt.prompt--idle,
+  #btn-download.btn--pulse {
+    animation: none !important;
+  }
+
+  /* Mantener legible el estado encendido del badge aunque no pulse */
+  .badge--on .badge__dot {
+    box-shadow: 0 0 8px rgba(31, 139, 58, 0.85);
+  }
+
+  /* Prompt visible y estable (sin respiracion) */
+  #idle-prompt.prompt--idle {
+    opacity: 1;
+    transform: translateX(-50%) scale(1);
+  }
+
+  /* El cargador puede girar (es feedback de carga util) pero suavizamos su loop.
+     Lo dejamos girando para no parecer congelado; alternativa: animation:none. */
+
+  /* Reducir/eliminar el rebote del slot pero conservar el relleno visible */
+  .slot--filled .slot__inner {
+    animation: none !important;
+    transform: scale(1);
+  }
+
+  /* Entradas instantaneas pero sin perder el estado final visible.
+     Mantenemos forwards al fijar directamente el estado final. */
+  .complete--show {
+    animation: none !important;
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+  .banner--show {
+    animation: none !important;
+    opacity: 1;
+    transform: translateY(0);
+  }
+  .controls--show .btn {
+    animation: none !important;
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  /* Conservar el flash de captura (feedback funcional clave) y el blink,
+     pero el blink lo dejamos pues es muy breve. */
+
+  /* Reducir transiciones largas del overlay a casi instantaneas */
+  .overlay > * {
+    transition-duration: 0.01ms;
+  }
+}
+
+/* Espejo de las reglas anteriores cuando el JS marca body.reduced-motion.
+   Esto cubre el caso en que la deteccion se hace por JS (matchMedia) y permite
+   forzar el modo independientemente de la media query. */
+body.reduced-motion .badge--on .badge__dot,
+body.reduced-motion #idle-prompt.prompt--idle,
+body.reduced-motion #btn-download.btn--pulse {
+  animation: none !important;
+}
+
+body.reduced-motion .badge--on .badge__dot {
+  box-shadow: 0 0 8px rgba(31, 139, 58, 0.85);
+}
+
+body.reduced-motion #idle-prompt.prompt--idle {
+  opacity: 1;
+  transform: translateX(-50%) scale(1);
+}
+
+body.reduced-motion .slot--filled .slot__inner {
+  animation: none !important;
+  transform: scale(1);
+}
+
+body.reduced-motion .complete--show {
+  animation: none !important;
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+}
+
+body.reduced-motion .banner--show {
+  animation: none !important;
+  opacity: 1;
+  transform: translateY(0);
+}
+
+body.reduced-motion .controls--show .btn {
+  animation: none !important;
+  opacity: 1;
+  transform: translateY(0);
+}
+
+body.reduced-motion .overlay > * {
+  transition-duration: 0.01ms;
+}
+
+/* =============================================================================
+   12. UTILIDADES Y SCROLLBAR
+============================================================================= */
+
+/* Barra de scroll discreta dentro de la tira / riel */
+.strip::-webkit-scrollbar,
+.rail::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.strip::-webkit-scrollbar-thumb,
+.rail::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 999px;
+}
+
+/* Fin de styles.css */

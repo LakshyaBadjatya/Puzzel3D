@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PUZZLE CAM — Demo</title>
+
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;900&display=swap"
+    rel="stylesheet"
+  />
+
+  <!-- Enables the simulation boot path in app.js (no real camera / MediaPipe). -->
+  <script>window.SIM_MODE = true;</script>
+
+  <style>
+    /* Small "DEMO" tag in the top bar so the showcase is clearly labelled. */
+    .demo-tag {
+      margin-left: 12px;
+      padding: 3px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 0.12em;
+      color: #0a0b0f;
+      background: var(--c-gold, #ffcf40);
+      vertical-align: middle;
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <header id="topbar" class="topbar">
+      <h1 id="title" class="title">PUZZLE CAM <span class="demo-tag">DEMO</span></h1>
+      <div id="status-badge" class="badge badge--off">
+        <span class="badge__dot"></span>
+        <span id="badge-label" class="badge__label">TRACKING HANDS</span>
+      </div>
+    </header>
+
+    <main id="layout" class="layout">
+      <section id="stage" class="stage">
+        <video id="cam-video" class="stage__video" autoplay playsinline muted></video>
+        <canvas id="cam-canvas" class="stage__canvas"></canvas>
+        <canvas id="fx-canvas" class="stage__canvas"></canvas>
+
+        <div id="stage-overlay" class="overlay">
+          <div id="idle-prompt" class="prompt prompt--idle">SHOW BOTH HANDS TO START</div>
+          <div id="countdown" class="countdown"><span id="countdown-num"></span></div>
+          <div id="flash" class="flash"></div>
+          <div id="complete" class="complete">COMPLETE!</div>
+          <div id="dim" class="dim"></div>
+        </div>
+
+        <!-- Always-visible floating controls: difficulty + Restart + hide strip/bar -->
+        <div id="stage-controls" class="stage-controls">
+          <div class="sgrid" role="group" aria-label="Grid size / difficulty">
+            <button class="sbtn sbtn--grid is-active" data-grid="3" type="button" title="3x3 (easy)">3&times;3</button>
+            <button class="sbtn sbtn--grid" data-grid="4" type="button" title="4x4 (medium)">4&times;4</button>
+            <button class="sbtn sbtn--grid" data-grid="5" type="button" title="5x5 (hard)">5&times;5</button>
+          </div>
+          <button id="btn-restart" class="sbtn" type="button" title="Restart the game">&#8635; Restart</button>
+          <button id="toggle-rail" class="sbtn" type="button" title="Hide/show the photo strip">&#9638; Strip</button>
+          <button id="toggle-topbar" class="sbtn" type="button" title="Hide/show the top bar">&#9644; Bar</button>
+        </div>
+      </section>
+
+      <aside id="rail" class="rail">
+        <div id="strip" class="strip"></div>
+        <div id="strip-banner" class="banner">STRIP COMPLETE — DOWNLOAD OR RESET TO CONTINUE</div>
+        <div id="controls" class="controls">
+          <button id="btn-download" class="btn btn--download">Download</button>
+          <button id="btn-reset" class="btn btn--reset">Reset</button>
+        </div>
+      </aside>
+    </main>
+
+    <div id="loader" class="loader">
+      <div class="loader__ring"></div>
+      <span class="loader__label">LOADING…</span>
+    </div>
+
+    <div id="camera-error" class="camera-error" hidden>I NEED CAMERA ACCESS TO PLAY</div>
+    <canvas id="export-canvas" hidden></canvas>
+  </div>
+
+  <!-- MediaPipe globals (kept so drawSkeleton can use HAND_CONNECTIONS for full
+       bones; no camera is ever requested in SIM_MODE). -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+
+  <!-- Project scripts (defer, contract load order). -->
+  <script defer src="config.js"></script>
+  <script defer src="state.js"></script>
+  <script defer src="camera.js"></script>
+  <script defer src="gestures.js"></script>
+  <script defer src="puzzle.js"></script>
+  <script defer src="animations.js"></script>
+  <script defer src="photostrip.js"></script>
+  <script defer src="app.js"></script>
+  <!-- Autopilot: runs after app.js (which has already booted via SIM_MODE). -->
+  <script defer src="simulation.js"></script>
+</body>
+</html>

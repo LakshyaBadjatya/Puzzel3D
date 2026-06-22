@@ -1,0 +1,48 @@
+# ───────────────────────────────────────────────
+#  Puzzle Cam — .gitignore
+# ───────────────────────────────────────────────
+
+# OS cruft
+.DS_Store
+Thumbs.db
+desktop.ini
+ehthumbs.db
+
+# Editors / IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Node (only if you ever add tooling — the app itself needs none)
+node_modules/
+npm-debug.log*
+yarn-error.log*
+package-lock.json
+pnpm-lock.yaml
+
+# Logs & temp
+*.log
+*.tmp
+tmp/
+
+# Screen recordings / heavy media (keep the repo lean)
+Recordings/
+*.mp4
+*.mov
+*.webm
+*.mkv
+
+# Local assistant / tooling state (not part of the project)
+.remember/
+memory/
+
+# Browser-automation / test artifacts
+.playwright-mcp/
+test-results/
+playwright-report/
+
+# Local environment
+.env
+.env.local

@@ -1,0 +1,638 @@
+# PUZZLE CAM — BUILD CONTRACT (authoritative)
+
+> This is the single source of truth. Every builder follows it EXACTLY: same file names, same
+> DOM ids/classes, same `@keyframes` names, same function signatures, same shared-state shape,
+> same constants. If the brief and this contract disagree, this contract wins. UI language:
+> Spanish. Code comments: Spanish.
+
+Synthesized from three lenses (state-and-flow, module-apis, animation-and-dom). The result is a
+single-owner state machine in `state.js`, one `requestAnimationFrame` loop in `app.js`, MediaPipe
+results pushed in via callback, gesture detection that writes only `APP.hands`, DOM chrome driven
+by CSS classes toggled centrally, and canvas motion driven by a tween registry ticked once per
+frame.
+
+---
+
+## 0. GLOBAL CONVENTIONS
+
+- **No bundler, no npm, no ES modules.** Each JS file attaches ONE global namespace to `window`.
+  Scripts use `defer` and execute in declared order.
+- **One shared mutable state object:** `window.APP` (defined in `state.js`). It is the only place
+  cross-cutting runtime truth lives.
+- **Single mutation gateway for the phase:** only `State.set(phase)` changes `APP.phase`. Only
+  `app.js` (in its onEnter handlers and `updatePhase`) calls `State.set`. Leaf modules NEVER set
+  the phase; they read it via `State.is(phase)`.
+- **Ownership of sub-objects (no cross-writes):**
+  - `gestures.js` is the ONLY writer of `APP.hands`.
+  - `puzzle.js` is the ONLY writer of `APP.puzzle`.
+  - `photostrip.js` is the ONLY writer of `APP.strip`.
+  - `animations.js` is the ONLY writer of `APP.fx`.
+  - `state.js` owns `APP.phase / prevPhase / phaseEnteredAt / ready / cameraError / capture /
+    readyRing / countdown / reducedMotion / frame`.
+  - `app.js` coordinates by calling module methods; it never deep-mutates the sub-objects above.
+- **One clock.** All time-based exits use `State.elapsed()` (ms since `phaseEnteredAt`) checked
+  inside the rAF loop. No `setTimeout` for state exits.
+- **One coordinate space.** All on-canvas hit-testing and the pinch cursor live in **stage canvas
+  pixels** (the internal pixel size of `#fx-canvas`). The un-mirror (`x' = 1 - x`) is applied
+  exactly once, inside `Gestures.toStage`. See §8.
+
+---
+
+## 1. FLAT FILE MANIFEST
+
+All files live in the project root (flat, no subfolders):
+
+```
+index.html
+styles.css
+config.js
+state.js
+camera.js
+gestures.js
+puzzle.js
+photostrip.js
+animations.js
+app.js
+```
+
+### Script load order in `index.html` (exact)
+
+```html
+<!-- MediaPipe CDN globals FIRST -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+<!-- App scripts (defer, ordered) -->
+<script defer src="config.js"></script>
+<script defer src="state.js"></script>
+<script defer src="camera.js"></script>
+<script defer src="gestures.js"></script>
+<script defer src="puzzle.js"></script>
+<script defer src="animations.js"></script>
+<script defer src="photostrip.js"></script>
+<script defer src="app.js"></script>
+```
+
+Load order is normative: `config → state → camera → gestures → puzzle → animations → photostrip
+→ app`. (`animations` before `photostrip` because `photostrip` calls `Anim.flyToStrip`.) The
+MediaPipe `<script>` tags are NOT `defer`-dependent on each other beyond DOM order; they must come
+before any app script that references `Hands`, `HAND_CONNECTIONS`, `Camera`, `drawConnectors`,
+`drawLandmarks`.
+
+### MediaPipe globals (the only ones used)
+
+`Hands`, `HAND_CONNECTIONS`, `Camera`, `drawConnectors`, `drawLandmarks`.
+
+---
+
+## 2. index.html DOM TREE — exact ids & classes
+
+```html
+<div id="app">
+  <header id="topbar" class="topbar">
+    <h1 id="title" class="title">PUZZLE CAM</h1>
+    <div id="status-badge" class="badge badge--off">
+      <span class="badge__dot"></span>
+      <span id="badge-label" class="badge__label">MANOS EN SEGUIMIENTO</span>
+    </div>
+  </header>
+
+  <main id="layout" class="layout">
+    <section id="stage" class="stage">
+      <video id="cam-video" class="stage__video" autoplay playsinline muted></video>
+      <canvas id="cam-canvas" class="stage__canvas"></canvas>   <!-- skeleton layer -->
+      <canvas id="fx-canvas"  class="stage__canvas"></canvas>   <!-- puzzle + effects layer -->
+      <div id="stage-overlay" class="overlay">
+        <div id="idle-prompt" class="prompt prompt--idle">JUNTA LAS MANOS PARA EMPEZAR</div>
+        <div id="countdown" class="countdown"><span id="countdown-num"></span></div>
+        <div id="flash" class="flash"></div>
+        <div id="complete" class="complete">¡COMPLETO!</div>
+        <div id="dim" class="dim"></div>
+      </div>
+    </section>
+
+    <aside id="rail" class="rail">
+      <div id="strip" class="strip"><!-- N x .slot generated by PhotoStrip.init --></div>
+      <div id="strip-banner" class="banner">TIRA COMPLETA — DESCARGA O REINICIA PARA SEGUIR</div>
+      <div id="controls" class="controls">
+        <button id="btn-download" class="btn btn--download">Descargar</button>
+        <button id="btn-reset"    class="btn btn--reset">Reiniciar</button>
+      </div>
+    </aside>
+  </main>
+
+  <div id="loader" class="loader">
+    <div class="loader__ring"></div>
+    <span class="loader__label">CARGANDO…</span>
+  </div>
+
+  <div id="camera-error" class="camera-error" hidden>NECESITO ACCESO A LA CÁMARA PARA JUGAR</div>
+
+  <!-- off-screen, NOT styled/visible; created in DOM but hidden -->
+  <canvas id="export-canvas" hidden></canvas>
+</div>
+```
+
+### Generated strip slot markup (one per slot, `PhotoStrip.init`)
+
+```html
+<div class="slot slot--empty" data-index="0"><div class="slot__inner"></div></div>
+```
+
+### Canonical id list (every id)
+
+`app, topbar, title, status-badge, badge-label, layout, stage, cam-video, cam-canvas, fx-canvas,
+stage-overlay, idle-prompt, countdown, countdown-num, flash, complete, dim, rail, strip,
+strip-banner, controls, btn-download, btn-reset, loader, camera-error, export-canvas`.
+
+### Canonical class list (key classes)
+
+`topbar, title, badge, badge--off, badge--on, badge__dot, badge__label, layout, stage,
+stage--blink, stage__video, stage__canvas, overlay, is-hidden, prompt, prompt--idle, countdown,
+flash, flash--fire, complete, complete--show, dim, dim--show, rail, strip, slot, slot--empty,
+slot--filled, slot--clearing, slot__inner, banner, banner--show, controls, controls--show, btn,
+btn--download, btn--reset, btn--pulse, loader, loader__ring, loader__label, camera-error,
+reduced-motion` (last applied to `<body>` when reduced motion is active).
+
+The `<canvas>` captured still is held in JS only (offscreen, never in DOM) — see
+`Camera.captureStill`.
+
+---
+
+## 3. CSS `@keyframes` NAMES (one per CSS-driven §6 animation)
+
+`styles.css` defines exactly these `@keyframes` (names are normative):
+
+| Keyframes name      | §6 item | Applied to (class)                         |
+|---------------------|---------|--------------------------------------------|
+| `badge-dot-pulse`   | #2      | `.badge--on .badge__dot`                   |
+| `prompt-breathe`    | #3      | `#idle-prompt.prompt--idle`                |
+| `capture-flash`     | #6      | `#flash.flash--fire`                       |
+| `stage-blink`       | #6      | `#stage.stage--blink`                      |
+| `complete-pop`      | #16     | `#complete.complete--show`                 |
+| `slot-bounce`       | #20     | `.slot--filled .slot__inner`               |
+| `slot-clear`        | #24     | `.slot--clearing .slot__inner`             |
+| `banner-in`         | #21     | `#strip-banner.banner--show`               |
+| `btn-rise`          | #22     | `#controls.controls--show .btn`            |
+| `download-pulse`    | #23     | `#btn-download.btn--pulse`                 |
+| `loader-spin`       | #26     | `.loader__ring`                            |
+
+These §6 items are CSS-driven (chrome): **2, 3, 6, 16, 20, 21, 22, 23, 24, 26**, plus the overlay
+crossfade transition for **25** (via `.is-hidden { opacity:0; pointer-events:none }` and
+`.overlay > * { transition: opacity .2s ease }`).
+
+These §6 items are CANVAS-driven (no `@keyframes`; tween registry / particles / per-frame):
+**1, 4, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15, 17, 18, 19**, plus the canvas side of **25**
+(global ctx alpha crossfade). Item **27** (reduced-motion) is the `@media (prefers-reduced-motion:
+reduce)` block plus the JS guard in §7/§9.
+
+---
+
+## 4. config.js — `window.CONFIG`, `window.STRINGS`
+
+`config.js` attaches two frozen objects. These exact keys/values are normative.
+
+```js
+window.CONFIG = Object.freeze({
+  // --- puzzle / strip ---
+  GRID: 3,
+  STRIP_SLOTS: 4,
+
+  // --- gesture thresholds (normalized 0..1) ---
+  PINCH_THRESHOLD: 0.05,     // thumb(4)-index(8) distance below => pinching
+  JOIN_THRESHOLD:  0.18,     // wrist(0)-wrist(0) distance below => hands joined
+  DEBOUNCE_FRAMES: 3,        // consecutive frames before a boolean gesture flips
+  LERP:            0.4,      // grabbed-tile drag follow smoothing
+  CURSOR_LERP:     0.5,      // pinch cursor smoothing
+
+  // --- timing (ms) ---
+  READY_HOLD_MS:   600,      // hands-joined ring fill duration (READY -> COUNTDOWN)
+  RING_UNWIND_MS:  300,      // ring decay rate when hands separate
+  COUNTDOWN_FROM:  3,
+  COUNTDOWN_TICK_MS: 1000,   // per-number duration
+  SOLVED_HOLD_MS:  1500,     // SOLVED dwell before STRIP_ADD
+
+  // --- canvas geometry ---
+  CAMERA_W: 640, CAMERA_H: 480,
+  CAPTURE_W: 480, CAPTURE_H: 480,        // square still (center-crop)
+  TILE_GAP_PX: 3,
+
+  // --- photo strip output ---
+  STRIP_PHOTO_W: 220, STRIP_PHOTO_H: 220, STRIP_FRAME_PX: 12, STRIP_HEADER_PX: 60,
+
+  // --- particles ---
+  CONFETTI_COUNT: 80,
+
+  // --- durations for canvas tweens (ms) ---
+  DUR: Object.freeze({
+    shatter: 400, scramble: 350, scrambleStagger: 30,
+    hover: 150, grab: 120, drag: 0, swap: 250,
+    correct: 400, nudge: 300,
+    solveGap: 300, solvePulse: 250,
+    flash: 310, countdownTick: 1000,
+    confetti: 1800, bw: 400, fly: 600, crossfade: 200,
+    slotBounce: 350, btnRise: 350, btnStagger: 80, banner: 400
+  }),
+
+  // --- easings (CSS strings) ---
+  EASES: Object.freeze({
+    back:  'cubic-bezier(.34,1.56,.64,1)',
+    out:   'cubic-bezier(.16,1,.3,1)',
+    inout: 'ease-in-out',
+    linear:'linear'
+  }),
+
+  // --- colors / fonts ---
+  COLORS: Object.freeze({
+    glowCyan: '#00fff7', skeleton: '#39ff14', gold: '#ffcf40',
+    green: '#1f8b3a', badgeOff: '#4a4a4a'
+  }),
+  FINGERTIPS: Object.freeze([4, 8, 12, 16, 20]),
+  FONT_COUNTDOWN: '900 220px Inter, sans-serif',
+
+  // --- set at runtime from matchMedia; see Anim.applyReducedMotion ---
+  REDUCED_MOTION: false
+});
+
+window.STRINGS = Object.freeze({
+  title:        'PUZZLE CAM',
+  tracking:     'MANOS EN SEGUIMIENTO',
+  noHands:      'MUESTRA TUS MANOS',
+  start:        'JUNTA LAS MANOS PARA EMPEZAR',
+  loading:      'CARGANDO…',
+  solved:       '¡COMPLETO!',
+  stripDone:    'TIRA COMPLETA — DESCARGA O REINICIA PARA SEGUIR',
+  download:     'Descargar',
+  reset:        'Reiniciar',
+  cameraDenied: 'NECESITO ACCESO A LA CÁMARA PARA JUGAR'
+});
+```
+
+`REDUCED_MOTION` is mutated once at boot via a non-frozen indirection: implement by reading
+`matchMedia('(prefers-reduced-motion: reduce)').matches` in `Anim.applyReducedMotion`, which sets
+`APP.reducedMotion` (the runtime flag the rest of the code reads) and adds `body.reduced-motion`.
+Code MUST read `APP.reducedMotion`, not the frozen `CONFIG.REDUCED_MOTION` literal.
+
+The numeric easing functions used by the canvas tween engine (`Anim.ease(name, t)`) are:
+`linear, outCubic, inCubic, inOutSine, backOut` (backOut overshoot constant `c1 = 1.70158`).
+
+---
+
+## 5. state.js — `window.State`, `window.States`, `window.APP`
+
+```js
+window.States = Object.freeze({
+  LOADING:'LOADING', IDLE:'IDLE', READY:'READY', COUNTDOWN:'COUNTDOWN',
+  CAPTURE:'CAPTURE', PUZZLE:'PUZZLE', SOLVED:'SOLVED',
+  STRIP_ADD:'STRIP_ADD', STRIP_COMPLETE:'STRIP_COMPLETE', ERROR:'ERROR'
+});
+```
+
+### `window.APP` — full shared-state shape (single mutable singleton)
+
+```js
+window.APP = {
+  phase: States.LOADING,
+  prevPhase: null,
+  phaseEnteredAt: 0,                 // performance.now() at entry; basis for all timed exits
+  frame: 0,                          // monotonically increasing rAF tick
+  reducedMotion: false,
+
+  ready: { mediapipe:false, camera:false },   // LOADING gating flags
+  cameraError: null,                          // string|null -> camera-denied screen
+
+  hands: {                           // written ONLY by gestures.js
+    count: 0,                        // 0|1|2 (debounced)
+    raw: [],                         // raw MediaPipe multiHandLandmarks (for skeleton draw)
+    joined: false,                   // both wrists within JOIN_THRESHOLD (debounced)
+    joinPoint: { x:0, y:0 },         // midpoint of two wrists in stage px
+    pinch: { active:false, x:0, y:0, justDown:false, justUp:false } // primary hand, stage px, edges
+  },
+
+  readyRing: { progress: 0 },        // 0..1 ring fill for READY
+
+  countdown: { value: 0, tickStartedAt: 0 },  // current number 3..1 and per-tick start time
+
+  capture: { dataURL:null, canvas:null },     // captured COLOR still for the round
+
+  puzzle: {                          // written ONLY by puzzle.js
+    order: [],                       // length GRID*GRID; order[cellIndex] = tileId in that cell
+    solved: false,
+    grabbedTileId: null,
+    tiles: [],                       // [{ id, correctCell, cell, renderX, renderY, scale,
+                                     //    opacity, lifted, hovered, correctPulseT, img }]
+    boardX:0, boardY:0, boardSize:0, cellSize:0   // board geometry in stage px
+  },
+
+  strip: {                           // written ONLY by photostrip.js
+    slots: [],                       // length STRIP_SLOTS: [{ filled:bool, dataURL:string|null }]
+    nextIndex: 0,
+    complete: false
+  },
+
+  fx: { confetti: [], flash: 0, completoT: 0, crossfadeT: 1 } // written ONLY by animations.js
+};
+```
+
+### `window.State` API (signatures + what it reads)
+
+```js
+State.init()                  // sets phase=LOADING, phaseEnteredAt=now, builds APP.strip.slots
+State.set(phase)              // THE only phase mutator: sets prevPhase, phase, phaseEnteredAt=now,
+                              //   frame=0; toggles central DOM classes (§ per-phase, see app.js
+                              //   onEnter wiring); fires onExit(prev) then onEnter(phase)
+                              //   listeners. Validates against TRANSITIONS (§5 table); on illegal
+                              //   move logs console.warn in Spanish and returns false.
+State.is(phase)               // -> boolean (phase === APP.phase)
+State.elapsed()               // -> performance.now() - APP.phaseEnteredAt  (ms)
+State.onEnter(phase, fn)      // register enter listener fn(prevPhase)
+State.onExit(phase, fn)       // register exit listener fn(nextPhase)
+State.reset()                 // wipe per-round fields: puzzle, capture, countdown, readyRing, fx
+                              //   (NOT strip). Used between rounds (STRIP_ADD -> IDLE).
+State.hardReset()             // State.reset() + clear strip (slots empty, nextIndex 0,
+                              //   complete=false). Used by Reiniciar.
+```
+
+`state.js` reads `CONFIG` (for `STRIP_SLOTS`) and `performance.now()`. It does not import any
+other app module.
+
+### Legal transitions table (validated inside `State.set`)
+
+```js
+const TRANSITIONS = {
+  LOADING:        ['IDLE','ERROR'],
+  IDLE:           ['READY'],
+  READY:          ['COUNTDOWN','IDLE'],     // back to IDLE if hands separate before hold completes
+  COUNTDOWN:      ['CAPTURE','IDLE'],       // back to IDLE if aborted (hands lost) [optional path]
+  CAPTURE:        ['PUZZLE'],
+  PUZZLE:         ['SOLVED'],
+  SOLVED:         ['STRIP_ADD'],
+  STRIP_ADD:      ['IDLE','STRIP_COMPLETE'],
+  STRIP_COMPLETE: ['IDLE'],                 // via Reiniciar
+  ERROR:          []
+};
+```
+
+---
+
+## 6. STATE MACHINE — transitions and which module fires each
+
+`app.js` is the only caller of `State.set`. The trigger is detected as follows:
+
+| From → To                | Trigger (detected by)                                              | Fired in                         |
+|--------------------------|-------------------------------------------------------------------|----------------------------------|
+| LOADING → IDLE           | `APP.ready.mediapipe && APP.ready.camera` (first results + start) | `app.onResults` / `app.boot`     |
+| LOADING → ERROR          | `APP.cameraError` set by `Camera.init` getUserMedia reject        | `app.boot`                       |
+| IDLE → READY             | `Gestures` set `APP.hands.joined === true` (debounced)            | `app.updatePhase` (IDLE branch)  |
+| READY → COUNTDOWN        | `APP.readyRing.progress >= 1` (held `READY_HOLD_MS`)              | `app.updatePhase` (READY branch) |
+| READY → IDLE             | `APP.hands.joined === false`                                      | `app.updatePhase` (READY branch) |
+| COUNTDOWN → CAPTURE      | `State.elapsed() >= COUNTDOWN_FROM * COUNTDOWN_TICK_MS`           | `app.updatePhase` (COUNTDOWN)    |
+| CAPTURE → PUZZLE         | `State.elapsed() >= DUR.flash`                                    | `app.updatePhase` (CAPTURE)      |
+| PUZZLE → SOLVED          | `Puzzle.checkSolved()` returns true after a release               | `app.handlePinchInput`           |
+| SOLVED → STRIP_ADD       | `State.elapsed() >= SOLVED_HOLD_MS`                               | `app.updatePhase` (SOLVED)       |
+| STRIP_ADD → STRIP_COMPLETE | fly-to-strip done AND `PhotoStrip.isComplete()`                 | `app.onEnterSTRIP_ADD` callback  |
+| STRIP_ADD → IDLE         | fly-to-strip done AND `!PhotoStrip.isComplete()`                 | `app.onEnterSTRIP_ADD` callback  |
+| STRIP_COMPLETE → IDLE    | Reiniciar click (`State.hardReset()` then `State.set(IDLE)`)     | `app.bindButtons`                |
+
+`Camera.init` resolves (never throws) on getUserMedia rejection; it sets `APP.cameraError` so
+`app.boot` routes LOADING → ERROR and shows the Spanish camera-denied screen.
+
+---
+
+## 7. PER-PHASE DOM CLASS TOGGLES (centralized)
+
+`State.set(phase)` (or `app.js` onEnter handlers wired through `State.onEnter`) is the single
+place that adds/removes these classes. Toggling rules:
+
+| Phase           | Add / remove                                                                 |
+|-----------------|------------------------------------------------------------------------------|
+| LOADING         | `#loader` visible; `#camera-error[hidden]`                                   |
+| ERROR           | `#loader` hidden; remove `[hidden]` on `#camera-error`                       |
+| IDLE            | `#loader` hidden; `#idle-prompt` shown (`prompt--idle`); `#dim.dim--show`; remove `#complete.complete--show`, `#strip-banner.banner--show`, `#controls.controls--show`, `#btn-download.btn--pulse` |
+| READY           | remove `#dim.dim--show` (or keep prompt; ring drawn on canvas)               |
+| COUNTDOWN       | hide `#idle-prompt` (`is-hidden`)                                            |
+| CAPTURE         | add `#flash.flash--fire` and `#stage.stage--blink` (both removed on `animationend`) |
+| PUZZLE          | overlay text hidden                                                          |
+| SOLVED          | add `#complete.complete--show`                                              |
+| STRIP_ADD       | remove `#complete.complete--show`                                          |
+| STRIP_COMPLETE  | add `#strip-banner.banner--show`, `#controls.controls--show`, `#btn-download.btn--pulse` |
+
+Status badge (`#status-badge`): `badge--on`/`badge--off` toggled every frame by
+`Anim.badgePulse(badgeEl, APP.hands.count > 0)` regardless of phase (§6 #2).
+
+---
+
+## 8. GESTURES — thresholds & cursor coordinate convention
+
+- **Join hands:** `APP.hands.count === 2 && wristDistance(handA, handB) < CONFIG.JOIN_THRESHOLD`
+  (0.18, normalized), debounced `CONFIG.DEBOUNCE_FRAMES` frames → sets `APP.hands.joined`.
+- **Pinch:** on the primary hand, `pinchDistance = dist(landmark4, landmark8) <
+  CONFIG.PINCH_THRESHOLD` (0.05, normalized). Debounced. The pinch midpoint (between 4 and 8) is
+  the cursor.
+- **Edges:** `APP.hands.pinch.justDown` is true for exactly one frame on the rising edge of the
+  debounced pinch boolean (used for grab); `justUp` for one frame on the falling edge (used for
+  drop/swap).
+- **Drag follow:** grabbed tile center lerps toward the cursor each frame, factor `CONFIG.LERP`
+  (0.4). Cursor itself smoothed by `CONFIG.CURSOR_LERP` (0.5).
+- **Cursor coordinate convention (mirror handling):** the `<video>` is mirrored via CSS
+  `transform: scaleX(-1)`. MediaPipe landmark `x` is therefore un-mirrored ONCE as `x' = 1 - x`
+  inside `Gestures.toStage(normPoint, stageRect, mirrored=true)`, then mapped to **stage canvas
+  pixels** using the SAME `stageRect` that `puzzle.js` uses for board geometry. The pinch cursor
+  and tile hit-tests share that one coordinate space. The hand skeleton (`#cam-canvas`) is drawn
+  un-mirrored on the canvas to visually align with the CSS-mirrored video — see §9 `Camera`/draw.
+
+---
+
+## 9. MODULE PUBLIC APIS (signatures + reads)
+
+### camera.js — `window.Camera`
+Reads/writes: writes `APP.ready.*`, `APP.cameraError`; reads `CONFIG`. Uses globals `Hands`,
+`Camera` (MediaPipe).
+```js
+Camera.init({ videoEl, onResults }) -> Promise<void>
+  // new Hands({locateFile}); setOptions {maxNumHands:2, modelComplexity:1,
+  //   minDetectionConfidence:0.6, minTrackingConfidence:0.6}; hands.onResults(onResults);
+  //   new Camera(videoEl,{onFrame:()=>hands.send({image:videoEl}), width:CAMERA_W, height:CAMERA_H}).
+  //   On success APP.ready.mediapipe=true (set on first results) & APP.ready.camera=true.
+  //   On getUserMedia reject: set APP.cameraError = STRINGS.cameraDenied and RESOLVE (no throw).
+Camera.start() -> Promise<void>                 // mpCamera.start()
+Camera.stop() -> void
+Camera.captureStill(videoEl) -> { dataURL:string, canvas:HTMLCanvasElement }
+  // draws current video frame to offscreen CAPTURE_W x CAPTURE_H square (center-crop),
+  //   mirrored to match selfie view; returns COLOR still. Stored in APP.capture.
+Camera.drawVideoMirrored(ctx) -> void           // optional: draw video into a canvas if needed
+Camera.isReady() -> boolean                     // APP.ready.mediapipe && APP.ready.camera
+```
+
+### gestures.js — `window.Gestures`
+Pure-ish: consumes MediaPipe results + `CONFIG`, writes ONLY `APP.hands`. Holds internal debounce
+counters. Uses globals `HAND_CONNECTIONS`, `drawConnectors`, `drawLandmarks`.
+```js
+Gestures.process(results, stageRect) -> void
+  // per-frame entry, called from app.onResults. Un-mirrors x, maps to stage px via stageRect,
+  //   updates APP.hands.{count,raw,joined,joinPoint,pinch}, applies DEBOUNCE_FRAMES,
+  //   sets pinch.justDown/justUp for exactly one frame.
+Gestures.wristDistance(landmarksA, landmarksB) -> number        // normalized
+Gestures.pinchDistance(landmarks) -> number                     // normalized 4<->8
+Gestures.isPinching(landmarks) -> boolean                       // < PINCH_THRESHOLD
+Gestures.handsJoined(multiLandmarks) -> boolean                 // 2 hands && wristDist < JOIN_THRESHOLD
+Gestures.toStage(normPoint, stageRect, mirrored=true) -> {x,y}  // un-mirror (x'=1-x) + map to stage px
+Gestures.primaryHand(results) -> landmarks|null                 // chosen pinch hand (first/right)
+Gestures.drawSkeleton(ctx, multiHandLandmarks) -> void
+  // §6 #1: drawConnectors(...,HAND_CONNECTIONS,{color:COLORS.skeleton,lineWidth:4}) with
+  //   ctx.shadowColor=COLORS.glowCyan, shadowBlur=8; drawLandmarks with radius
+  //   i => FINGERTIPS.includes(i)?7:4. No lerp; per-frame.
+Gestures.resetDebounce() -> void
+```
+
+### puzzle.js — `window.Puzzle`
+Writes ONLY `APP.puzzle`; reads `CONFIG`, `APP.hands`. Calls `Anim.*` factories for tile tweens.
+```js
+Puzzle.layout(stageRect) -> {boardX,boardY,boardSize,cellSize}  // single board-geometry source
+Puzzle.create(captureCanvas, boardGeom) -> void
+  // slice captureCanvas into GRID*GRID tile sub-canvases; fill APP.puzzle.tiles in solved order
+  //   (solved=true pre-scramble); store boardGeom into APP.puzzle.
+Puzzle.shatterIn(onDone) -> void                // §6 #7: grid lines draw-in + gap insets ~DUR.shatter
+Puzzle.scramble() -> void                       // §6 #8: solvable, non-solved permutation
+                                                //   (Puzzle.isSolvable + !checkSolved guard, re-roll);
+                                                //   staggered slide tweens (DUR.scramble/scrambleStagger)
+Puzzle.tileAtPoint(x, y) -> tileId|null         // hit-test stage px
+Puzzle.cellAtPoint(x, y) -> cellIndex|null
+Puzzle.grab(tileId) -> void                     // §6 #10: lifted, grabbedTileId, z-top, scale 1.08
+Puzzle.dragTo(x, y) -> void                     // §6 #11: lerp grabbed tile center toward (x,y)
+Puzzle.release(x, y) -> { swapped:boolean, targetCell:number|null }
+  // §6 #12/#14: drop; if over a cell -> swap order[] + swap tween; else spring-back (ease-back).
+  //   Clears lifted/grabbedTileId. Triggers §6 #13 correctPulse if a tile lands correct.
+Puzzle.checkSolved() -> boolean                 // order[i]===tile.correctCell all; sets APP.puzzle.solved
+Puzzle.isSolvable(order) -> boolean             // inversion parity
+Puzzle.cellCenter(cellIndex) -> {x,y}           // stage px center of a cell
+Puzzle.draw(ctx) -> void                        // render all tiles each frame (PUZZLE/SOLVED)
+Puzzle.revealSolved(onDone) -> void             // §6 #15: gaps/lines fade + board scale pulse
+Puzzle.clear() -> void
+```
+
+### photostrip.js — `window.PhotoStrip`
+Writes ONLY `APP.strip`; reads `CONFIG`, `STRINGS`. Calls `Anim.flyToStrip`.
+```js
+PhotoStrip.init(stripRootEl) -> void            // build STRIP_SLOTS dashed placeholders (#20); mirror APP.strip.slots
+PhotoStrip.toGrayscale(srcCanvas) -> HTMLCanvasElement   // luminance 0.299R+0.587G+0.114B (#18)
+PhotoStrip.nextIndex() -> number                // APP.strip.nextIndex
+PhotoStrip.slotRect(index) -> DOMRect           // for fly-to-strip target
+PhotoStrip.addPhoto(bwCanvas) -> { slotIndex:number, slotEl:HTMLElement }
+  // fill APP.strip.slots[nextIndex], swap .slot--empty -> .slot--filled (bounce #20), advance nextIndex
+PhotoStrip.isComplete() -> boolean              // nextIndex >= STRIP_SLOTS (sets APP.strip.complete)
+PhotoStrip.composite() -> HTMLCanvasElement     // offscreen vertical B&W strip + header (uses #export-canvas)
+PhotoStrip.exportPNG() -> void                  // composite().toDataURL('image/png') -> download puzzlecam_tira_<n>.png
+PhotoStrip.clear() -> void                      // reset all slots to dashed (#24); reset APP.strip
+```
+
+### animations.js — `window.Anim`
+Writes ONLY `APP.fx` (and tween-target props on objects passed in). Reads `CONFIG`,
+`APP.reducedMotion`. Tween engine + DOM-class helpers.
+```js
+// tween engine
+Anim.tween({ target, props, dur, ease, delay=0, onUpdate, onDone }) -> tweenId
+Anim.tick(now) -> void                          // advance ALL tweens + particles + countdown; ONE call per frame
+Anim.cancel(tweenId) -> void
+Anim.clear() -> void
+Anim.lerp(a,b,t) -> number
+Anim.ease(name, t) -> number                    // linear|outCubic|inCubic|inOutSine|backOut
+// canvas factories
+Anim.drawSkeletonStyle(...) // (skeleton itself lives in Gestures.drawSkeleton)
+Anim.drawJoinRing(ctx, cx, cy, progress01) -> void                 // §6 #4
+Anim.drawCountdown(ctx, value, tickElapsed) -> void                // §6 #5
+Anim.shatter(onDone) -> void                                       // §6 #7 (called via Puzzle.shatterIn)
+Anim.scramble(tiles) -> void                                       // §6 #8 slides
+Anim.setHover(tile, on) -> void                                    // §6 #9
+Anim.grab(tile) -> void                                            // §6 #10
+Anim.swap(tileA, tileB, onDone) -> void                            // §6 #12
+Anim.correctPulse(tile) -> void                                    // §6 #13
+Anim.nudgeBack(tile, originX, originY) -> void                     // §6 #14
+Anim.solveReveal(onDone) -> void                                   // §6 #15 (called via Puzzle.revealSolved)
+Anim.spawnConfetti() -> void                                       // §6 #17 (early-return if reducedMotion)
+Anim.drawConfetti(ctx, now) -> boolean                             // step+draw; true while alive
+Anim.bwCrossfade(srcCanvas, grayCanvas, onDone) -> void            // §6 #18
+Anim.flyToStrip(thumbCanvas, fromRect, toRect, onDone) -> void     // §6 #19
+Anim.flash(ctx, t) -> void                                         // §6 #6 canvas-side (if used)
+// DOM-class helpers (toggle classes; CSS owns @keyframes)
+Anim.badgePulse(badgeEl, hasHands) -> void                         // §6 #2
+Anim.idlePrompt(promptEl, on) -> void                              // §6 #3
+Anim.completo(el, show) -> void                                    // §6 #16
+Anim.banner(bannerEl, show) -> void                                // §6 #21
+Anim.revealButtons(controlsEl, show) -> void                       // §6 #22
+Anim.downloadPulse(btnEl, on) -> void                              // §6 #23
+Anim.spinner(loaderEl, on) -> void                                 // §6 #26
+Anim.applyReducedMotion(prefers) -> void                           // §6 #27: set APP.reducedMotion + body.reduced-motion
+```
+
+### app.js — controller (no namespace export)
+Owns the single rAF loop. The ONLY module that calls `State.set` and that wires modules together.
+```js
+app.boot() -> Promise<void>
+  // on DOMContentLoaded: cache DOM els; Anim.applyReducedMotion(matchMedia(...).matches);
+  //   PhotoStrip.init(stripEl); State.init(); register all State.onEnter/onExit handlers;
+  //   bindButtons(); Camera.init({videoEl, onResults: app.onResults}); if APP.cameraError ->
+  //   State.set(ERROR) else Camera.start(); Anim.spinner(loader,true); start rAF loop.
+app.onResults(results) -> void
+  // MediaPipe callback: Gestures.process(results, app.stageRect()); APP.ready.mediapipe=true;
+  //   if LOADING && ready.camera -> State.set(IDLE). NO drawing here.
+app.stageRect() -> {x,y,width,height}            // internal pixel rect of #fx-canvas (shared coord space)
+app.loop(now) -> void
+  // THE single requestAnimationFrame loop. Exact order each frame:
+  //   1. APP.frame++;
+  //   2. Anim.badgePulse(badgeEl, APP.hands.count>0);
+  //   3. app.updatePhase(now);            // per-phase transition checks + State.set as needed
+  //   4. Anim.tick(now);                  // advance tweens/particles/countdown
+  //   5. clear #cam-canvas; Gestures.drawSkeleton(camCtx, APP.hands.raw);
+  //   6. clear #fx-canvas; per-phase canvas draw (ring/countdown/puzzle/flash/confetti);
+  //   7. requestAnimationFrame(app.loop);
+app.updatePhase(now) -> void                     // switch(APP.phase): time/gesture exit checks (see §6 table)
+app.handlePinchInput() -> void                   // PUZZLE: read APP.hands.pinch edges -> Puzzle.grab/dragTo/release;
+                                                 //   hover hit-test; if Puzzle.checkSolved() -> State.set(SOLVED)
+app.bindButtons() -> void
+  // #btn-download -> PhotoStrip.exportPNG(); #btn-reset -> PhotoStrip.clear(); State.hardReset();
+  //   State.set(IDLE).
+// onEnter handlers registered via State.onEnter:
+app.onEnterREADY()      // APP.readyRing.progress=0
+app.onEnterCOUNTDOWN()  // APP.countdown.value=COUNTDOWN_FROM; tickStartedAt=now
+app.onEnterCAPTURE()    // APP.capture = Camera.captureStill(videoEl); flash classes added (§7)
+app.onEnterPUZZLE()     // Puzzle.create(APP.capture.canvas, Puzzle.layout(app.stageRect()));
+                        //   Puzzle.shatterIn(()=>Puzzle.scramble())
+app.onEnterSOLVED()     // Puzzle.revealSolved(); Anim.completo(completeEl,true); Anim.spawnConfetti()
+app.onEnterSTRIP_ADD()  // const gray=PhotoStrip.toGrayscale(APP.capture.canvas);
+                        //   Anim.bwCrossfade(APP.capture.canvas, gray, ()=>{
+                        //     const i=PhotoStrip.nextIndex();
+                        //     Anim.flyToStrip(gray, app.stageCenterRect(), PhotoStrip.slotRect(i), ()=>{
+                        //       PhotoStrip.addPhoto(gray);
+                        //       State.set(PhotoStrip.isComplete()? States.STRIP_COMPLETE : States.IDLE);
+                        //     });
+                        //   })
+app.onEnterSTRIP_COMPLETE() // Anim.banner/ revealButtons / downloadPulse via §7 toggles
+```
+
+---
+
+## 10. RENDER ORDER & TIMING GUARANTEES
+
+- **Single rAF loop** (`app.loop`) owns all timing and rendering (brief §2 / §6 #40). Tweens,
+  particles, countdown, and timed-exit checks all ride `app.loop(now)`. `Anim.tick(now)` is called
+  exactly once per frame.
+- **No `setTimeout` for state exits.** Timed exits (READY 600ms, COUNTDOWN 3×1000ms, CAPTURE
+  flash 310ms, SOLVED 1500ms) are checked in `app.updatePhase` using `State.elapsed()`. Because
+  `State.set` resets `phaseEnteredAt`, a late timer can never fire into the wrong phase.
+- **Illegal transitions impossible:** `State.set` validates against the `TRANSITIONS` table and
+  warns (Spanish) on illegal moves.
+- **Reduced motion:** `app.boot` calls `Anim.applyReducedMotion`; confetti and cosmetic pulses
+  early-return / shorten, but functional feedback (flash, correct-cell pulse, fly-to-strip) stays.
+- **Camera failure:** `Camera.init` never throws; `APP.cameraError` routes LOADING → ERROR with
+  the Spanish denied screen — no console errors, no crash (brief §2 / §10).
+
+---
+
+## 11. PHOTO-STRIP OUTPUT (brief §8)
+
+`PhotoStrip.composite()` builds an offscreen vertical strip on `#export-canvas`: header band
+(`STRIP_HEADER_PX` tall, "PUZZLE CAM" + small caption), then N grayscale photos each
+`STRIP_PHOTO_W × STRIP_PHOTO_H` with `STRIP_FRAME_PX` white frames/gaps. Grayscale via luminance
+`0.299R + 0.587G + 0.114B`. `PhotoStrip.exportPNG()` calls `toDataURL('image/png')` and triggers a
+download named `puzzlecam_tira_<n>.png` where `<n>` is the number of filled slots.
