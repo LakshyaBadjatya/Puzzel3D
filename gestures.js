@@ -29,6 +29,19 @@
   var INDEX_TIP = 8;    // punta del índice (para la pinza)
 
   // ---------------------------------------------------------------------------
+  // Tamaño REAL del fotograma de la cámara (px). Es la fuente de verdad para la
+  // transformación "cover" de toStage(). Antes se usaba CONFIG.CAMERA_W/H fijo
+  // (640x480 = 4:3), lo que DESALINEABA el cursor y el esqueleto en cualquier
+  // webcam que no fuese 4:3 (la mayoría de portátiles entregan 16:9, p. ej.
+  // 1280x720). Lo que importa para "cover" es la RELACIÓN de aspecto, así que
+  // medimos el frame real en process() (results.image) y lo usamos aquí.
+  // Arranca con los valores de CONFIG hasta el primer fotograma; en SIM_MODE no
+  // hay results.image, por lo que se mantiene en CONFIG (coincide con el inverso
+  // que usa simulation.js).
+  var srcW = (window.CONFIG && CONFIG.CAMERA_W) ? CONFIG.CAMERA_W : 640;
+  var srcH = (window.CONFIG && CONFIG.CAMERA_H) ? CONFIG.CAMERA_H : 480;
+
+  // ---------------------------------------------------------------------------
   // Estado interno de debounce (privado del módulo).
   //   - joinCounter / pinchCounter cuentan fotogramas CONSECUTIVOS en los que la
   //     condición instantánea difiere del estado estable ya confirmado.
@@ -48,8 +61,16 @@
 
     cursorX: 0,            // última X suavizada del cursor (px del escenario)
     cursorY: 0,            // última Y suavizada del cursor (px del escenario)
-    cursorInit: false      // ¿ya hay una posición previa válida para el lerp?
+    cursorInit: false,     // ¿ya hay una posición previa válida para el lerp?
+    cursorTime: 0          // timestamp del último suavizado (para dt indep. de FPS)
   };
+
+  // Reloj monótono para el suavizado independiente de FPS.
+  function nowMs() {
+    return (typeof performance !== 'undefined' && performance.now)
+      ? performance.now()
+      : Date.now();
+  }
 
   // ---------------------------------------------------------------------------
   // Utilidad interna: distancia euclídea entre dos puntos {x,y}.
@@ -143,8 +164,12 @@
       // desalinearía el cursor respecto a la mano visible (CONTRACT §8). Aplicamos
       // aquí la misma transformación "cover" para que el punto normalizado caiga
       // donde el usuario ve su mano.
-      var camW = CONFIG.CAMERA_W;
-      var camH = CONFIG.CAMERA_H;
+      // Tamaño REAL del frame (medido en process desde results.image). Usar el
+      // aspecto real corrige la desalineación del cursor/esqueleto en webcams que
+      // no son 4:3 (p. ej. 16:9). Solo importa la relación de aspecto: el punto
+      // viene normalizado 0..1.
+      var camW = srcW;
+      var camH = srcH;
       var scale = Math.max(stageRect.width / camW, stageRect.height / camH);
       var displayedW = camW * scale;
       var displayedH = camH * scale;
@@ -195,6 +220,17 @@
     process: function (results, stageRect) {
       var hands = APP.hands;
       var multi = (results && results.multiHandLandmarks) ? results.multiHandLandmarks : [];
+
+      // --- 0) Tamaño real del fotograma -------------------------------------
+      // MediaPipe adjunta el frame de entrada en results.image. Medimos su tamaño
+      // real para que toStage() use el aspecto verdadero de ESTA webcam (corrige
+      // la desalineación en cámaras 16:9). En SIM_MODE no hay image -> mantenemos
+      // los valores de CONFIG (coinciden con el inverso de simulation.js).
+      if (results && results.image &&
+          results.image.width > 0 && results.image.height > 0) {
+        srcW = results.image.width;
+        srcH = results.image.height;
+      }
 
       // --- 1) Manos crudas y conteo -----------------------------------------
       // raw alimenta el dibujo del esqueleto; count es 0|1|2.
@@ -266,6 +302,7 @@
         if (t && i) {
           var mid = { x: (t.x + i.x) / 2, y: (t.y + i.y) / 2 };
           var target = this.toStage(mid, stageRect, true);
+          var ts = nowMs();
           if (!debounce.cursorInit) {
             // Primera muestra válida: colocamos el cursor sin suavizar para
             // evitar un salto desde (0,0).
@@ -273,9 +310,28 @@
             debounce.cursorY = target.y;
             debounce.cursorInit = true;
           } else {
-            debounce.cursorX = lerp(debounce.cursorX, target.x, CONFIG.CURSOR_LERP);
-            debounce.cursorY = lerp(debounce.cursorY, target.y, CONFIG.CURSOR_LERP);
+            // Suavizado EXPONENCIAL independiente de los FPS: el "feel" es el mismo
+            // a 60 fps o a 24 fps (en equipos lentos el cursor ya no se arrastra).
+            // alpha base equivale a CURSOR_LERP por frame de ~16.67ms.
+            var dt = debounce.cursorTime ? (ts - debounce.cursorTime) : 16.67;
+            if (dt < 1) dt = 1; else if (dt > 64) dt = 64;
+            var base = (typeof CONFIG.CURSOR_LERP === 'number') ? CONFIG.CURSOR_LERP : 0.5;
+            var alpha = 1 - Math.pow(1 - base, dt / 16.6667);
+            // Adaptativo por velocidad: en movimientos amplios "engancha" más rápido
+            // (sin lag); cuando la mano está casi quieta se suaviza al máximo, lo que
+            // elimina el jitter típico de webcams de baja calidad.
+            var dx = target.x - debounce.cursorX;
+            var dy = target.y - debounce.cursorY;
+            var dist = Math.sqrt(dx * dx + dy * dy);
+            var snapPx = (typeof CONFIG.CURSOR_SNAP_PX === 'number') ? CONFIG.CURSOR_SNAP_PX : 90;
+            var boost = snapPx > 0 ? (dist / snapPx) : 0;
+            if (boost > 1) boost = 1;
+            alpha = alpha + (1 - alpha) * boost;
+            if (alpha > 1) alpha = 1;
+            debounce.cursorX += dx * alpha;
+            debounce.cursorY += dy * alpha;
           }
+          debounce.cursorTime = ts;
           pinch.x = debounce.cursorX;
           pinch.y = debounce.cursorY;
         }
@@ -292,6 +348,7 @@
         // Olvidamos la posición previa del cursor para no suavizar contra una
         // posición obsoleta cuando la mano reaparezca.
         debounce.cursorInit = false;
+        debounce.cursorTime = 0;   // evita un dt enorme al reaparecer la mano
       }
     },
 
@@ -388,6 +445,7 @@
       debounce.cursorX = 0;
       debounce.cursorY = 0;
       debounce.cursorInit = false;
+      debounce.cursorTime = 0;
 
       // Limpiamos también los reflejos en APP.hands (único escritor: este módulo).
       if (window.APP && APP.hands) {
@@ -396,6 +454,16 @@
         APP.hands.pinch.justDown = false;
         APP.hands.pinch.justUp = false;
       }
+    },
+
+    /* -------------------------------------------------------------------------
+     * Gestures.frameSize() -> { w, h }
+     *   Tamaño real del fotograma de la cámara medido en el último process()
+     *   (results.image). Es la MISMA fuente que usa toStage() para el mapeo
+     *   "cover". simulation.js la usa para invertir el mapeo con coherencia.
+     * ---------------------------------------------------------------------- */
+    frameSize: function () {
+      return { w: srcW, h: srcH };
     }
   };
 

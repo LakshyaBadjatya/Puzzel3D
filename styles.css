@@ -98,9 +98,13 @@ body {
     radial-gradient(120% 80% at 50% -10%, #1a1e2b 0%, var(--bg-1) 55%, var(--bg-0) 100%);
   background-attachment: fixed;
   overflow: hidden;                 /* la app ocupa toda la ventana, sin scroll */
+  overscroll-behavior: none;        /* evita el "pull-to-refresh"/rebote en móvil */
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   user-select: none;                /* juego por gestos; evitar seleccion accidental */
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent; /* sin flash azul al tocar en móvil */
+  touch-action: manipulation;       /* sin doble-tap-zoom; toques de control más ágiles */
 }
 
 img,
@@ -129,8 +133,13 @@ button {
   position: relative;
   display: flex;
   flex-direction: column;
-  width: 100vw;
+  width: 100%;
+  /* 100vh incluye la barra del navegador en móvil y recortaba los controles de
+     abajo. dvh (dynamic viewport height) sigue a la barra al aparecer/ocultarse.
+     svh como respaldo intermedio; 100vh para navegadores sin dvh. */
   height: 100vh;
+  height: 100svh;
+  height: 100dvh;
   padding: var(--gap);
   gap: var(--gap);
 }
@@ -275,7 +284,10 @@ button {
   right: 12px;
   z-index: 6;                 /* over canvases (1-2) and overlay (3) */
   display: flex;
+  flex-wrap: wrap;            /* en pantallas estrechas los botones bajan de fila */
+  justify-content: flex-end;
   gap: 8px;
+  max-width: calc(100% - 24px);  /* nunca se salen del escenario */
 }
 .sbtn {
   pointer-events: auto;       /* overlay/canvas are pointer-events:none */
@@ -826,6 +838,13 @@ button {
    El riel pasa debajo del escenario en ventanas estrechas.
 ============================================================================= */
 @media (max-width: 880px) {
+  /* Menos margen/altura para ganar espacio de pantalla en móvil/tablet. */
+  :root {
+    --gap: 10px;
+    --topbar-h: 52px;
+    --radius: 12px;
+  }
+
   .layout {
     flex-direction: column;
   }
@@ -834,16 +853,25 @@ button {
     flex-direction: row;
     flex-wrap: wrap;
     align-items: stretch;
+    padding: 10px;
+    gap: 10px;
+    /* La tira NO debe robarle altura al escenario: la acotamos a una banda. */
+    max-height: 38vh;
   }
   .strip {
     flex: 1 1 100%;
     flex-direction: row;
+    height: 96px;             /* banda horizontal de miniaturas */
     overflow-x: auto;
     overflow-y: hidden;
+    padding: 8px;
+    gap: 8px;
+    -webkit-overflow-scrolling: touch;
   }
   .slot {
-    flex: 0 0 120px;
-    width: 120px;
+    flex: 0 0 80px;           /* miniaturas cuadradas con scroll horizontal */
+    width: 80px;
+    height: 100%;
   }
   .controls {
     flex: 1 1 100%;
@@ -852,6 +880,56 @@ button {
   .title {
     font-size: 20px;
   }
+  /* El escenario conserva una altura mínima útil aunque la tira esté presente. */
+  .stage {
+    min-height: 48vh;
+  }
+}
+
+/* --- Móvil estrecho: aún más compacto y controles a pantalla completa --- */
+@media (max-width: 520px) {
+  .topbar { padding: 0 14px; }
+  .title { font-size: 17px; letter-spacing: 0.1em; }
+  .badge { padding: 6px 10px; font-size: 11px; }
+  .slot { flex-basis: 68px; width: 68px; }
+  .strip { height: 84px; }
+}
+
+/* --- Pantallas bajas / móvil en horizontal: dejar el escenario lado a lado ---
+   En horizontal el alto es escaso; apilar la tira aplastaría el vídeo. Volvemos
+   a fila (escenario + riel estrecho) y comprimimos la barra superior. */
+@media (max-height: 560px) and (orientation: landscape) {
+  :root { --gap: 8px; --topbar-h: 44px; --rail-w: 168px; }
+  .layout { flex-direction: row; }
+  .rail {
+    flex: 0 0 var(--rail-w);
+    flex-direction: column;
+    max-height: none;
+  }
+  .strip {
+    flex: 1 1 auto;
+    flex-direction: column;
+    height: auto;
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+  .slot { flex: 1 1 0; width: 100%; height: auto; }
+  .controls { flex-direction: column; }
+  .stage { min-height: 0; }
+  .title { font-size: 16px; }
+}
+
+/* --- Punteros táctiles / sin hover: agrandar los objetivos de toque ---
+   Botones flotantes y de acción más grandes para dedos (recomendado >=44px). */
+@media (hover: none), (pointer: coarse) {
+  .sbtn {
+    padding: 11px 14px;
+    font-size: 13px;
+    border-radius: 12px;
+  }
+  .sbtn--grid { padding: 11px 12px; }
+  .stage-controls { gap: 10px; }
+  .btn { padding: 15px 16px; font-size: 16px; }
 }
 
 /* =============================================================================

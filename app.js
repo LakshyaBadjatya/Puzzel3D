@@ -82,7 +82,12 @@
     fxCtx = dom.fxCanvas.getContext('2d');
     resizeCanvases();
     // Re-dimensionar si cambia el viewport (mantiene el espacio de coords sano).
-    window.addEventListener('resize', resizeCanvases);
+    // Lo coalescemos con rAF: en móvil/al rotar, 'resize' puede dispararse en
+    // ráfaga; así hacemos UN solo re-ajuste por frame (menos reflows, más fluido).
+    window.addEventListener('resize', onViewportResize);
+    // orientationchange en móviles llega antes de que el layout se estabilice;
+    // el rAF de onViewportResize ya espera al siguiente frame.
+    window.addEventListener('orientationchange', onViewportResize);
 
     // 3. Reduced-motion: lee matchMedia y fija APP.reducedMotion + body.reduced-motion.
     var mql = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -189,14 +194,55 @@
     // Fallback de seguridad si el layout aun no tiene tamano medible.
     var w = Math.max(1, Math.round(rect.width));
     var h = Math.max(1, Math.round(rect.height));
+    var changed = false;
     if (dom.camCanvas.width !== w || dom.camCanvas.height !== h) {
       dom.camCanvas.width = w;
       dom.camCanvas.height = h;
+      changed = true;
     }
     if (dom.fxCanvas.width !== w || dom.fxCanvas.height !== h) {
       dom.fxCanvas.width = w;
       dom.fxCanvas.height = h;
+      changed = true;
     }
+
+    // Solo re-ajustamos el tablero cuando el tamano REALMENTE cambio: asi un
+    // evento 'resize' espurio (sin cambio de caja) no cancela animaciones en vuelo.
+    if (!changed) {
+      return;
+    }
+
+    // Si hay un puzzle visible, re-encajarlo al nuevo tamano del escenario para
+    // que siga centrado y a escala (rotacion de movil, barra del navegador que
+    // aparece/desaparece, o togglear la tira / barra superior). Sin esto, tras un
+    // cambio de viewport el tablero quedaba descentrado/mal escalado.
+    var phase = window.APP.phase;
+    var puzzleVisible = (phase === States.PUZZLE || phase === States.SOLVED ||
+                         phase === States.STRIP_ADD);
+    if (puzzleVisible && window.APP.puzzle.tiles && window.APP.puzzle.tiles.length) {
+      // Cancelamos tweens en vuelo (no APP.fx: preserva confeti en SOLVED) para
+      // que no reescriban posiciones con coordenadas del tamano anterior.
+      if (window.Anim && typeof window.Anim.clearTweens === 'function') {
+        window.Anim.clearTweens();
+      }
+      if (window.Puzzle && typeof window.Puzzle.relayout === 'function') {
+        window.Puzzle.relayout(stageRect());
+      }
+    }
+  }
+
+  // Coalescedor de 'resize'/'orientationchange' con rAF: agrupa ráfagas de
+  // eventos en un único re-ajuste por frame (más fluido en móvil).
+  var resizeQueued = false;
+  function onViewportResize() {
+    if (resizeQueued) {
+      return;
+    }
+    resizeQueued = true;
+    window.requestAnimationFrame(function () {
+      resizeQueued = false;
+      resizeCanvases();
+    });
   }
 
   // ---------------------------------------------------------------------

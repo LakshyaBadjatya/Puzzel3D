@@ -48,6 +48,28 @@
     return 'https://cdn.jsdelivr.net/npm/@mediapipe/hands/' + file;
   }
 
+  /**
+   * Resuelve modelComplexity (0|1) a partir de CONFIG.CAMERA.MODEL_COMPLEXITY.
+   * 'auto' elige 0 (lite, ~2x más rápido) en equipos modestos —pocos núcleos de
+   * CPU o móviles— y 1 (más preciso) en el resto. Esto optimiza la fluidez en
+   * webcams/equipos de baja potencia sin penalizar a los potentes.
+   */
+  function resolveModelComplexity() {
+    var camCfg = (CONFIG && CONFIG.CAMERA) ? CONFIG.CAMERA : null;
+    var pref = camCfg ? camCfg.MODEL_COMPLEXITY : 1;
+    if (pref === 0 || pref === 1) {
+      return pref;
+    }
+    // 'auto' u otro valor: heurística por potencia del dispositivo.
+    var cores = (typeof navigator !== 'undefined' && navigator.hardwareConcurrency)
+      ? navigator.hardwareConcurrency
+      : 4;
+    var isMobile = (typeof navigator !== 'undefined' && navigator.userAgent)
+      ? /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
+      : false;
+    return (cores <= 4 || isMobile) ? 0 : 1;
+  }
+
   window.Camera = {
     /**
      * Inicializa MediaPipe Hands y la cámara (Contrato §9 / §6 tabla LOADING).
@@ -73,12 +95,18 @@
 
           // --- 1) Modelo Hands --------------------------------------------
           // Hands es un global del CDN (@mediapipe/hands).
+          var camCfg = (CONFIG && CONFIG.CAMERA) ? CONFIG.CAMERA : {};
+          var minDet = (typeof camCfg.MIN_DETECTION_CONFIDENCE === 'number')
+            ? camCfg.MIN_DETECTION_CONFIDENCE : 0.5;
+          var minTrk = (typeof camCfg.MIN_TRACKING_CONFIDENCE === 'number')
+            ? camCfg.MIN_TRACKING_CONFIDENCE : 0.5;
+
           mpHands = new Hands({ locateFile: locateFile });
           mpHands.setOptions({
-            maxNumHands: 2,            // dos manos: necesario para "juntar manos"
-            modelComplexity: 1,        // 1 = mayor precisión que 0
-            minDetectionConfidence: 0.6,
-            minTrackingConfidence: 0.6
+            maxNumHands: 2,                              // dos manos: necesario para "juntar manos"
+            modelComplexity: resolveModelComplexity(),  // 0 (lite) en equipos lentos; 1 en potentes
+            minDetectionConfidence: minDet,             // más bajo => mejor adquisición en poca luz / baja res
+            minTrackingConfidence: minTrk
           });
           // Registrar el callback de resultados (app.onResults).
           mpHands.onResults(onResults);
@@ -98,6 +126,11 @@
                 return mpHands.send({ image: videoEl });
               }
             },
+            // width/height son IDEALES (no exactos): cualquier webcam los ajusta a
+            // su resolución soportada. facingMode: 'user' selecciona la cámara
+            // frontal (selfie) en móviles. La resolución real se mide en vivo en
+            // gestures.js (results.image), así que un valor distinto no desalinea nada.
+            facingMode: (camCfg.FACING_MODE || 'user'),
             width: CONFIG.CAMERA_W,
             height: CONFIG.CAMERA_H
           });
@@ -226,17 +259,11 @@
 
       ctx.restore();
 
-      // dataURL en color (PNG) como conveniencia; el canvas es la fuente real.
-      var dataURL = null;
-      try {
-        dataURL = canvas.toDataURL('image/png');
-      } catch (err) {
-        // toDataURL puede lanzar por "tainted canvas"; degradamos con elegancia.
-        console.warn('Camera.captureStill: no se pudo serializar a dataURL:', err);
-        dataURL = null;
-      }
-
-      return { dataURL: dataURL, canvas: canvas };
+      // El canvas ES la fuente real (lo consumen Puzzle.create y PhotoStrip).
+      // NO serializamos a dataURL aquí: nadie lo usa y toDataURL('image/png') es
+      // una codificación costosa que provocaba un "tirón" en cada captura,
+      // especialmente en equipos lentos. Se deja null por compatibilidad de forma.
+      return { dataURL: null, canvas: canvas };
     },
 
     /**

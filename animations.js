@@ -199,6 +199,15 @@
     }
   }
 
+  // Cancela SOLO los tweens en vuelo (sin tocar APP.fx: confeti, flash, etc.).
+  // Lo usa app.js antes de re-ajustar el tablero en un resize: si quedara un
+  // tween de scramble/swap activo, sobrescribiría las nuevas posiciones con
+  // coordenadas del tamaño anterior. A diferencia de clear(), preserva el confeti
+  // (importante en SOLVED) y el resto de efectos de APP.fx.
+  function clearTweens() {
+    _tweens.length = 0;
+  }
+
   // Limpia TODOS los tweens y las partículas. Útil entre rondas / reinicio.
   function clear() {
     _tweens.length = 0;
@@ -944,6 +953,7 @@
     tick: tick,
     cancel: cancel,
     clear: clear,
+    clearTweens: clearTweens,
     lerp: lerp,
     ease: ease,
 

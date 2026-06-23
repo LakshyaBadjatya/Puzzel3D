@@ -39,11 +39,29 @@
     STRIP_SLOTS: 4,           // número de fotos en la tira
 
     // --- umbrales de gestos (landmarks normalizados 0..1) ---
-    PINCH_THRESHOLD: 0.05,    // distancia pulgar(4)-índice(8) por debajo => pellizco
+    PINCH_THRESHOLD: 0.055,   // distancia pulgar(4)-índice(8) por debajo => pellizco
+                              // (algo más tolerante para webcams ruidosas / baja resolución)
     JOIN_THRESHOLD:  0.18,    // distancia muñeca(0)-muñeca(0) por debajo => manos juntas
     DEBOUNCE_FRAMES: 3,       // fotogramas consecutivos antes de cambiar un gesto booleano
     LERP:            0.4,     // suavizado del seguimiento de la pieza agarrada al arrastrar
-    CURSOR_LERP:     0.5,     // suavizado del cursor de pellizco
+    CURSOR_LERP:     0.5,     // suavizado base del cursor (a 60 fps; ver CURSOR_SNAP_PX)
+    // Por encima de esta distancia (px de stage) el cursor "engancha" más rápido al
+    // objetivo para no quedar rezagado en movimientos rápidos; por debajo se suaviza
+    // al máximo para matar el jitter de cámaras de baja calidad. Gestures lo usa para
+    // un suavizado adaptativo e independiente de los FPS (clave para equipos lentos).
+    CURSOR_SNAP_PX:  90,
+
+    // --- cámara / MediaPipe Hands (afinado para webcams de baja calidad) ---
+    // modelComplexity 0 (lite) ~ el doble de rápido que 1 en equipos lentos; los
+    // gestos aquí (pellizco / dos manos) son toscos y funcionan bien con 0.
+    //   'auto' => 0 en equipos de pocos núcleos (<=4) o móviles, 1 en el resto.
+    // Confianzas algo más bajas para adquirir la mano en poca luz / baja resolución.
+    CAMERA: Object.freeze({
+      MODEL_COMPLEXITY: 'auto',       // 0 | 1 | 'auto'
+      MIN_DETECTION_CONFIDENCE: 0.5,
+      MIN_TRACKING_CONFIDENCE: 0.5,
+      FACING_MODE: 'user'             // cámara frontal (selfie) en móviles
+    }),
 
     // --- temporización (ms) ---
     READY_HOLD_MS:   600,     // duración del llenado del anillo manos-juntas (READY -> COUNTDOWN)

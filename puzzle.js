@@ -827,6 +827,47 @@
   // ---------------------------------------------------------------------------
 
   /**
+   * Puzzle.relayout(stageRect) -> void
+   * Re-ajusta el tablero al NUEVO tamaño del escenario (cambio de tamaño de
+   * ventana, rotación de móvil, mostrar/ocultar barra o tira). Recalcula la
+   * geometria y RECOLOCA cada ficha en el centro de SU celda actual con el nuevo
+   * cellSize, de modo que el tablero siga centrado y del tamaño correcto, y que
+   * el hit-test (que usa la misma geometria) siga cuadrando con lo que se ve.
+   *
+   * IMPORTANTE: el llamador (app.js) debe cancelar antes los tweens en vuelo
+   * (Anim.clearTweens) para que no sobrescriban estas posiciones con coordenadas
+   * del tamaño anterior. Cualquier ficha agarrada se suelta visualmente.
+   */
+  function relayout(stageRect) {
+    var p = APP.puzzle;
+    if (!p.tiles || p.tiles.length === 0) {
+      return;
+    }
+    var geom = layout(stageRect);
+    p.boardX = geom.boardX;
+    p.boardY = geom.boardY;
+    p.boardSize = geom.boardSize;
+    p.cellSize = geom.cellSize;
+
+    // Estado visual en reposo (sin tweens a medias): gaps completos, sin pulso.
+    p.shatterT = 1;
+    p.boardPulse = 1;
+    p.grabbedTileId = null;
+
+    for (var i = 0; i < p.tiles.length; i++) {
+      var t = p.tiles[i];
+      var ctr = cellCenter(t.cell);   // usa la geometria recién fijada arriba
+      t.renderX = ctr.x;
+      t.renderY = ctr.y;
+      t.targetX = ctr.x;
+      t.targetY = ctr.y;
+      t.scale = 1;
+      t.opacity = 1;
+      t.lifted = false;
+    }
+  }
+
+  /**
    * Puzzle.clear() -> void
    * Vacia el estado del rompecabezas (entre rondas o en reset).
    */
@@ -862,6 +903,7 @@
     cellCenter: cellCenter,
     draw: draw,
     revealSolved: revealSolved,
+    relayout: relayout,
     clear: clear
   };
 })();

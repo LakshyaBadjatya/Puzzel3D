@@ -145,7 +145,12 @@
   // -------------------------------------------------------------------------
   function stageToNorm(sx, sy) {
     var rect = window.app.stageRect();
-    var camW = CONFIG.CAMERA_W, camH = CONFIG.CAMERA_H;
+    // Usamos la MISMA fuente de tamaño de frame que toStage() (Gestures.frameSize)
+    // para que el inverso quede perfectamente alineado aunque cambie el aspecto.
+    var fs = (window.Gestures && typeof window.Gestures.frameSize === 'function')
+      ? window.Gestures.frameSize()
+      : { w: CONFIG.CAMERA_W, h: CONFIG.CAMERA_H };
+    var camW = fs.w, camH = fs.h;
     var scale = Math.max(rect.width / camW, rect.height / camH);
     var dispW = camW * scale, dispH = camH * scale;
     var offX = (rect.width - dispW) / 2, offY = (rect.height - dispH) / 2;
