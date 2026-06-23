@@ -860,9 +860,15 @@
   // ===========================================================================
 
   // §6 #2 — Pulso del badge de estado. badge--on / badge--off según haya manos.
+  // Se llama CADA frame desde app.loop; con un guardado del último estado evitamos
+  // tocar el DOM (classList) cuando no hay cambio — menos trabajo por frame.
+  var _lastBadgeOn = null;
   function badgePulse(badgeEl, hasHands) {
     if (!badgeEl) return;
-    if (hasHands) {
+    var on = !!hasHands;
+    if (on === _lastBadgeOn) return;   // sin cambio de estado -> no tocamos el DOM
+    _lastBadgeOn = on;
+    if (on) {
       badgeEl.classList.add('badge--on');
       badgeEl.classList.remove('badge--off');
     } else {

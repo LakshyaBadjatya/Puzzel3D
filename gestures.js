@@ -89,6 +89,41 @@
     return a + (b - a) * t;
   }
 
+  // ---------------------------------------------------------------------------
+  // Proyección normalizado -> px de stage ESCRIBIENDO en `out` (sin asignar un
+  // objeto nuevo). Misma transformación "cover" que toStage(). La usa
+  // drawSkeleton con un pool reutilizable para NO generar basura (GC) por frame:
+  // antes cada frame creaba ~21 objetos {x,y} por mano, lo que provocaba micro-
+  // tirones en equipos lentos. toStage() delega aquí pasando un objeto nuevo, así
+  // su contrato (devolver objeto nuevo) se mantiene para el resto de llamadores.
+  // ---------------------------------------------------------------------------
+  function projectInto(normPoint, stageRect, mirrored, out) {
+    var nx = mirrored ? (1 - normPoint.x) : normPoint.x;
+    var ny = normPoint.y;
+    var camW = srcW;
+    var camH = srcH;
+    var scale = Math.max(stageRect.width / camW, stageRect.height / camH);
+    var displayedW = camW * scale;
+    var displayedH = camH * scale;
+    var offsetX = (stageRect.width - displayedW) / 2;
+    var offsetY = (stageRect.height - displayedH) / 2;
+    out.x = stageRect.x + offsetX + nx * displayedW;
+    out.y = stageRect.y + offsetY + ny * displayedH;
+    return out;
+  }
+
+  // Pool de puntos {x,y} reutilizados entre frames por drawSkeleton (una mano a
+  // la vez se dibuja, así que 21 ranuras bastan; crecen si hiciera falta).
+  var _skelPool = [];
+  function skelPoint(i) {
+    var o = _skelPool[i];
+    if (!o) {
+      o = { x: 0, y: 0 };
+      _skelPool[i] = o;
+    }
+    return o;
+  }
+
   var Gestures = {
 
     /* -------------------------------------------------------------------------
@@ -154,33 +189,12 @@
      * ---------------------------------------------------------------------- */
     toStage: function (normPoint, stageRect, mirrored) {
       if (mirrored === undefined) mirrored = true;        // por defecto, espejado
-      // Des-espejado de la X (una única vez, aquí dentro).
-      var nx = mirrored ? (1 - normPoint.x) : normPoint.x;
-      var ny = normPoint.y;                                // la Y no se espeja
-
-      // El <video> se muestra con object-fit: cover dentro del stage, por lo que
-      // el frame de cámara (CAMERA_W x CAMERA_H) se escala para LLENAR la caja del
-      // stage recortando el eje sobrante. Un mapeo lineal a la caja completa
-      // desalinearía el cursor respecto a la mano visible (CONTRACT §8). Aplicamos
-      // aquí la misma transformación "cover" para que el punto normalizado caiga
-      // donde el usuario ve su mano.
-      // Tamaño REAL del frame (medido en process desde results.image). Usar el
-      // aspecto real corrige la desalineación del cursor/esqueleto en webcams que
-      // no son 4:3 (p. ej. 16:9). Solo importa la relación de aspecto: el punto
-      // viene normalizado 0..1.
-      var camW = srcW;
-      var camH = srcH;
-      var scale = Math.max(stageRect.width / camW, stageRect.height / camH);
-      var displayedW = camW * scale;
-      var displayedH = camH * scale;
-      var offsetX = (stageRect.width - displayedW) / 2;   // negativo si se recorta X
-      var offsetY = (stageRect.height - displayedH) / 2;  // negativo si se recorta Y
-
-      // Mapeo a píxeles del escenario respetando el recorte de cover.
-      return {
-        x: stageRect.x + offsetX + nx * displayedW,
-        y: stageRect.y + offsetY + ny * displayedH
-      };
+      // Misma transformación "cover" que projectInto, pero devolviendo un objeto
+      // nuevo (contrato público de toStage). El <video> usa object-fit: cover, así
+      // que el frame de cámara se escala para LLENAR el stage recortando el eje
+      // sobrante; usamos el tamaño REAL del frame (srcW/srcH, medido en process
+      // desde results.image) para alinear bien también en webcams no 4:3 (16:9).
+      return projectInto(normPoint, stageRect, mirrored, { x: 0, y: 0 });
     },
 
     /* -------------------------------------------------------------------------
@@ -387,10 +401,13 @@
         var landmarks = multiHandLandmarks[h];
         if (!landmarks || !landmarks.length) continue;
 
-        // Project all 21 landmarks into stage space (mirror + cover), like the cursor.
-        var pts = [];
-        for (var i = 0; i < landmarks.length; i++) {
-          pts.push(this.toStage(landmarks[i], stageRect, true));
+        // Project all landmarks into stage space (mirror + cover) using the
+        // reusable pool — NO per-frame allocation (zero GC pressure on weak
+        // devices). One hand is fully drawn before the next, so the pool can be
+        // refilled per hand.
+        var n = landmarks.length;
+        for (var i = 0; i < n; i++) {
+          projectInto(landmarks[i], stageRect, true, skelPoint(i));
         }
 
         // Bones (connectors).
@@ -399,8 +416,8 @@
           ctx.lineWidth = 4;
           for (var c = 0; c < HAND_CONNECTIONS.length; c++) {
             var conn = HAND_CONNECTIONS[c];
-            var a = pts[conn[0]];
-            var b = pts[conn[1]];
+            var a = (conn[0] < n) ? _skelPool[conn[0]] : null;
+            var b = (conn[1] < n) ? _skelPool[conn[1]] : null;
             if (!a || !b) continue;
             ctx.beginPath();
             ctx.moveTo(a.x, a.y);
@@ -410,8 +427,8 @@
         }
 
         // Joints: bigger dots on the fingertips.
-        for (var j = 0; j < pts.length; j++) {
-          var p = pts[j];
+        for (var j = 0; j < n; j++) {
+          var p = _skelPool[j];
           var r = (CONFIG.FINGERTIPS.indexOf(j) !== -1) ? 7 : 4;
           ctx.beginPath();
           ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
