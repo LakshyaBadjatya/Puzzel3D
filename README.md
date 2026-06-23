@@ -158,6 +158,7 @@ CONTRACT.md       → the architecture contract the modules follow
 ## 🙌 Credits
 
 - Concept inspired by a hand-tracking puzzle reel on Instagram.
+- Built with AI assistance (Claude) for coding and iteration.
 
 ---
 
