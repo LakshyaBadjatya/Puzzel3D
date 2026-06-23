@@ -60,7 +60,16 @@
       MODEL_COMPLEXITY: 'auto',       // 0 | 1 | 'auto'
       MIN_DETECTION_CONFIDENCE: 0.5,
       MIN_TRACKING_CONFIDENCE: 0.5,
-      FACING_MODE: 'user'             // cámara frontal (selfie) en móviles
+      FACING_MODE: 'user',            // cámara frontal (selfie) en móviles
+      // Tope de fotogramas/seg que se envían a MediaPipe (la inferencia de manos
+      // es el mayor coste de CPU). Un equipo lento con cámara a 60fps haría 60
+      // inferencias/seg; limitarlas a 30 reduce la carga a la mitad con latencia
+      // de seguimiento apenas perceptible. El bucle de render sigue a pantalla
+      // completa (rAF), así que el cursor se ve igual de fluido.
+      //   0      => sin tope (máxima respuesta; equipos potentes).
+      //   número => tope fijo en esos fps.
+      //   'auto' => 30 en equipos modestos (<=4 núcleos o móvil), sin tope en el resto.
+      MAX_TRACK_FPS: 'auto'
     }),
 
     // --- temporización (ms) ---

@@ -70,6 +70,28 @@
     return (cores <= 4 || isMobile) ? 0 : 1;
   }
 
+  /**
+   * Resuelve el tope de FPS de inferencia (CONFIG.CAMERA.MAX_TRACK_FPS).
+   *   número => ese tope ; 0 => sin tope ; 'auto' => 30 en equipos modestos.
+   * Devuelve 0 (sin tope) o un número de fps.
+   */
+  function resolveMaxTrackFps() {
+    var camCfg = (CONFIG && CONFIG.CAMERA) ? CONFIG.CAMERA : null;
+    var pref = camCfg ? camCfg.MAX_TRACK_FPS : 0;
+    if (typeof pref === 'number') {
+      return pref > 0 ? pref : 0;
+    }
+    // 'auto': topar a 30 fps en equipos modestos (misma heurística que la
+    // complejidad del modelo); sin tope en equipos potentes (máxima respuesta).
+    var cores = (typeof navigator !== 'undefined' && navigator.hardwareConcurrency)
+      ? navigator.hardwareConcurrency
+      : 4;
+    var isMobile = (typeof navigator !== 'undefined' && navigator.userAgent)
+      ? /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
+      : false;
+    return (cores <= 4 || isMobile) ? 30 : 0;
+  }
+
   window.Camera = {
     /**
      * Inicializa MediaPipe Hands y la cámara (Contrato §9 / §6 tabla LOADING).
@@ -117,12 +139,29 @@
             throw new Error('El constructor Camera de MediaPipe (camera_utils) no está disponible.');
           }
 
+          // Tope de FPS de inferencia (0 = sin tope). Lo calculamos una vez aquí.
+          var maxFps = resolveMaxTrackFps();
+          var minSendInterval = maxFps > 0 ? (1000 / maxFps) : 0;
+          var lastSendTs = 0;
+
           mpCamera = new MPCamera(videoEl, {
             // Cada fotograma del video se envía al modelo Hands.
             onFrame: function () {
               // Solo enviamos cuando el video ya tiene datos suficientes
               // (readyState >= 2 = HAVE_CURRENT_DATA), evitando ruido en arranque.
               if (mpHands && videoEl && videoEl.readyState >= 2) {
+                // Limitación de FPS de inferencia en equipos modestos: si no ha
+                // pasado el intervalo mínimo desde el último envío, saltamos este
+                // fotograma (la inferencia de manos es el mayor coste de CPU). El
+                // bucle de render sigue a pantalla completa, así que se ve fluido.
+                if (minSendInterval > 0) {
+                  var t = (typeof performance !== 'undefined' && performance.now)
+                    ? performance.now() : Date.now();
+                  if (t - lastSendTs < minSendInterval) {
+                    return;
+                  }
+                  lastSendTs = t;
+                }
                 return mpHands.send({ image: videoEl });
               }
             },
